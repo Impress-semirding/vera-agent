@@ -31,7 +31,7 @@ export default function AgentListHeader() {
       {/* Logo */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 18, fontWeight: 600, marginRight: 16 }}>
         <StarOutlined style={{ color: '#1677ff' }} />
-        <span>小智</span>
+        <span>Vera</span>
       </div>
 
       {/* Mode Switcher */}

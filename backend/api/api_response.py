@@ -50,7 +50,7 @@ def iso(dt: datetime | None) -> str | None:
 # ─── Current user ───────────────────────────────────────────────────────────
 # There is no real auth in the management API yet. ``created_by`` / ``updated_by``
 # are populated from the ``X-User`` header so a client can impersonate a user
-# (useful against the seeded data, e.g. ``X-User: 王聪``). Defaults to
+# (useful against the seeded data, e.g. ``X-User: ``). Defaults to
 # ``current-user`` so created agents show up under the "mine" filter.
 
 DEFAULT_USER = "current-user"

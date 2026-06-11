@@ -36,7 +36,7 @@ export default function LoginPage() {
         {/* Brand */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 8 }}>
           <StarOutlined style={{ color: '#1677ff', fontSize: 22 }} />
-          <span style={{ fontSize: 20, fontWeight: 600 }}>小智</span>
+          <span style={{ fontSize: 20, fontWeight: 600 }}>Vera</span>
         </div>
         <p style={{ textAlign: 'center', color: '#00000073', fontSize: 13, marginBottom: 24 }}>登录以管理你的智能体</p>
 
@@ -53,7 +53,6 @@ export default function LoginPage() {
         </Form>
 
         <div style={{ marginTop: 16, textAlign: 'center', fontSize: 12, color: '#00000040' }}>
-          演示账号：王聪 / 123456（或 鲁婉婉、张三、赵六）
         </div>
       </div>
     </div>

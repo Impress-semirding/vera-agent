@@ -1,4 +1,4 @@
-# fast-agent
+# Vera
 
 Agent management platform — a React + FastAPI app for creating agents, chatting
 with them over a streaming WebSocket, and managing skills / tools / permissions.
@@ -6,7 +6,7 @@ with them over a streaming WebSocket, and managing skills / tools / permissions.
 ## Structure
 
 ```
-fast-agent/
+vera/
 ├── frontend/   # React 18 + TypeScript + Vite + Ant Design + Zustand
 └── backend/    # FastAPI + SQLite (async SQLAlchemy) + Pydantic + WebSocket chat
 ```
@@ -20,13 +20,29 @@ fast-agent/
 
 ```bash
 cd backend
-pip install -e .          # fastapi, uvicorn, sqlalchemy, aiosqlite, websockets, ...
+
+# 1. 创建并激活虚拟环境（推荐）
+python3 -m venv .venv
+source .venv/bin/activate
+
+# 2. 安装依赖
+pip install -e .            # 仅运行时依赖
+pip install -e ".[dev]"     # 运行时 + 开发依赖（pytest、ruff、mypy 等）
+
+#    如果下载超时，使用国内镜像源：
+pip install -e ".[dev]" -i https://pypi.tuna.tsinghua.edu.cn/simple
+
+# 3. 启动服务
 uvicorn api.main:app --host 127.0.0.1 --port 18080 --reload
 ```
 
+**运行时依赖：** fastapi, uvicorn, pydantic, httpx, sse-starlette, sqlalchemy, aiosqlite, websockets, python-multipart 等。
+
+**开发依赖（`[dev]`）：** pytest, pytest-asyncio, mypy, ruff。
+
 - API base: `http://127.0.0.1:18080/api/v1` · docs: `http://127.0.0.1:18080/docs`
 - First run creates `backend/reasonix.db` and seeds sample data + login users.
-- Seeded login accounts (password `123456`): `王聪` / `鲁婉婉` / `张三` / `赵六`.
+- Seeded login account: `admin` (password `123456`).
 
 ## Frontend
 

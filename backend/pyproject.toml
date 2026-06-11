@@ -3,9 +3,9 @@ requires = ["hatchling"]
 build-backend = "hatchling.build"
 
 [project]
-name = "fast-agent-backend"
+name = "vera-backend"
 version = "0.1.0"
-description = "fast-agent backend (FastAPI + SQLite + WebSocket chat)"
+description = "Vera backend (FastAPI + SQLite + WebSocket chat)"
 requires-python = ">=3.11"
 dependencies = [
     "fastapi>=0.111",
@@ -22,7 +22,12 @@ dependencies = [
     # multipart uploads (skill .zip) + WebSocket chat
     "python-multipart>=0.0.9",
     "websockets>=12.0",
+    # YAML parsing (skill zip manifests)
+    "pyyaml>=6.0",
 ]
+
+[tool.hatch.build.targets.wheel]
+packages = ["agent", "api"]
 
 [project.optional-dependencies]
 dev = [
