@@ -4,7 +4,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 
-DATABASE_URL = "sqlite+aiosqlite:///./reasonix.db"
+DATABASE_URL = "sqlite+aiosqlite:///./data/db/reasonix.db"
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -34,10 +34,15 @@ async def _migrate(conn) -> None:
     constraint can't be added to an existing SQLite table without rebuilding
     it, so (agent_id, name) uniqueness is also enforced in application code.)
     """
-    # skills: zip_data (BLOB) + filename — uploaded skill package storage.
+    # Skip migration entirely if the skills table was just created by create_all
+    # (i.e. the new schema already has all columns).
     rows = (await conn.execute(text("PRAGMA table_info(skills)"))).fetchall()
+    if not rows:
+        return
     columns = {r[1] for r in rows}
-    if "zip_data" not in columns:
-        await conn.execute(text("ALTER TABLE skills ADD COLUMN zip_data BLOB"))
+
+    # For old DBs: add file_path column (zip_data already exists from prior migration).
+    if "file_path" not in columns:
+        await conn.execute(text("ALTER TABLE skills ADD COLUMN file_path VARCHAR(500)"))
     if "filename" not in columns:
         await conn.execute(text("ALTER TABLE skills ADD COLUMN filename VARCHAR(500)"))

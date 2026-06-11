@@ -1,6 +1,9 @@
+import { useEffect, useState } from 'react';
 import { Form, Input, Select, Switch, Button, Avatar, Upload } from 'antd';
 import { UserOutlined, CameraOutlined } from '@ant-design/icons';
 import type { AgentType, AppMode, AgentFormData } from '@/types/agent';
+import { modelConfigService } from '@/services/modelConfigService';
+import type { ModelOption } from '@/types/modelConfig';
 
 interface Props {
   agentType: AgentType;
@@ -10,22 +13,28 @@ interface Props {
   onBack: () => void;
 }
 
-const MODELS = [
-  { label: 'GLM-5.1', value: 'glm-5-1' },
-  { label: 'Claude 3 Opus', value: 'claude-3-opus' },
-  { label: 'DeepSeek V4 Flash', value: 'deepseek-v4-flash' },
-  { label: 'DeepSeek V4 Pro', value: 'deepseek-v4-pro' },
-];
-
 export default function BasicInfoForm({ agentType, mode, submitting, onSubmit, onBack }: Props) {
   const [form] = Form.useForm();
+  const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
+
+  useEffect(() => {
+    modelConfigService.listModels().then(res => {
+      const opts = res.data ?? [];
+      setModelOptions(opts);
+      // Set first model as default if form value is empty
+      if (opts.length > 0) {
+        form.setFieldValue('model', opts[0]!.value);
+      }
+    }).catch(() => {
+      // silently fail
+    });
+  }, [form]);
 
   const handleFinish = (values: any) => {
     onSubmit({
       ...values,
       type: agentType,
       mode,
-      // System agents expose a "全员可见" toggle; personal agents are private.
       visibility: agentType === 'system' ? values.visibility ?? true : false,
     });
   };
@@ -41,7 +50,7 @@ export default function BasicInfoForm({ agentType, mode, submitting, onSubmit, o
         }}
       >
         <h2 style={{ marginBottom: 24, fontSize: 16 }}>基本信息</h2>
-        <Form form={form} layout="vertical" onFinish={handleFinish} initialValues={{ model: 'glm-5-1' }}>
+        <Form form={form} layout="vertical" onFinish={handleFinish}>
           <Form.Item label="名称" name="name" rules={[{ required: true, message: '请输入名称' }]}>
             <Input placeholder="请输入智能体名称" />
           </Form.Item>
@@ -51,7 +60,11 @@ export default function BasicInfoForm({ agentType, mode, submitting, onSubmit, o
           </Form.Item>
 
           <Form.Item label="使用模型" name="model" rules={[{ required: true, message: '请选择模型' }]}>
-            <Select options={MODELS} />
+            <Select
+              options={modelOptions.map(m => ({ label: m.label, value: m.value }))}
+              placeholder="请选择模型（需先在模型配置中添加）"
+              notFoundContent="暂无模型，请先在「模型配置」中添加"
+            />
           </Form.Item>
 
           <Form.Item label="头像">

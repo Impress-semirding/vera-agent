@@ -41,7 +41,7 @@ uvicorn api.main:app --host 127.0.0.1 --port 18080 --reload
 **开发依赖（`[dev]`）：** pytest, pytest-asyncio, mypy, ruff。
 
 - API base: `http://127.0.0.1:18080/api/v1` · docs: `http://127.0.0.1:18080/docs`
-- First run creates `backend/reasonix.db` and seeds sample data + login users.
+- First run creates `backend/data/db/reasonix.db` and seeds sample data + login users.
 - Seeded login account: `admin` (password `123456`).
 
 ## Frontend

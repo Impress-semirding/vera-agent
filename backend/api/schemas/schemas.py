@@ -410,4 +410,36 @@ class ModifyRecordOut(BaseModel):
     timestamp: str
 
 
+# ═══════════════════════ ModelConfig ═══════════════════════
+
+
+class ModelConfigCreate(BaseModel):
+    provider: str           # deepseek | glm | minimax | qianwen
+    name: str               # display name
+    modelId: str            # model identifier for API calls
+    baseUrl: str            # Anthropic-compatible base URL
+    apiKey: str             # API key
+    enabled: bool = True
+
+
+class ModelConfigUpdate(BaseModel):
+    name: str | None = None
+    modelId: str | None = None
+    baseUrl: str | None = None
+    apiKey: str | None = None
+    enabled: bool | None = None
+
+
+class ModelConfigOut(BaseModel):
+    id: str
+    provider: str
+    name: str
+    modelId: str
+    baseUrl: str
+    apiKey: str
+    enabled: bool
+    updatedAt: str
+    createdAt: str
+
+
 ConfigFileTreeNode.model_rebuild()

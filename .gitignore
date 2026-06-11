@@ -19,7 +19,7 @@ venv/
 .ruff_cache/
 
 # Dev databases / runtime state
-*.db
+data/
 *.db-journal
 *.db-wal
 *.db-shm

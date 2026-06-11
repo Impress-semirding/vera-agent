@@ -8,7 +8,7 @@ The Vite dev server (``fr/``) proxies ``/api`` → ``http://127.0.0.1:18080``,
 so all routes are mounted under ``/api/v1`` to match the frontend's
 ``axios`` ``baseURL: '/api/v1'``.
 
-Startup creates the SQLite schema (``reasonix.db``) and seeds sample data.
+Startup creates the SQLite schema (``data/db/reasonix.db``) and seeds sample data.
 The sibling ``reasonix_server`` package owns the *agent runtime* and is kept
 fully separate.
 """
@@ -33,6 +33,7 @@ from api.routers import (
     history,
     mcp,
     messages,
+    model_configs,
     permissions,
     push,
     session_settings,
@@ -80,6 +81,7 @@ for _router in (
     chat.router,
     mcp.router,
     skills.router,
+    model_configs.router,
     permissions.router,
     push.router,
     wecom.router,

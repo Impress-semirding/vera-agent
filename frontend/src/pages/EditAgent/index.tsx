@@ -1,11 +1,11 @@
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Button, Tag, Input, Switch, Spin,
   Modal, Popconfirm, Empty,
 } from 'antd';
 import {
-  ArrowLeftOutlined, MessageOutlined, SettingOutlined, AppstoreOutlined,
+  ArrowLeftOutlined, ArrowDownOutlined, MessageOutlined, SettingOutlined, AppstoreOutlined,
   PlusOutlined, SendOutlined, PaperClipOutlined,
   DownloadOutlined, RobotOutlined, UserOutlined,
   TeamOutlined, FileTextOutlined, CodeOutlined,
@@ -203,7 +203,7 @@ export default function EditAgentPage() {
 
         {/* Tabs */}
         <div className={s.sidebarTabs}>
-          <div className={`${s.sidebarTab} ${sidebarTab === 'session' ? s.active : ''}`} onClick={() => setSidebarTab('session')}>
+          <div className={`${s.sidebarTab} ${sidebarTab === 'session' ? s.active : ''}`} onClick={() => { setSidebarTab('session'); setRightView('chat'); }}>
             <MessageOutlined /> 会话
           </div>
           <div className={`${s.sidebarTab} ${sidebarTab === 'config' ? s.active : ''}`} onClick={() => setSidebarTab('config')}>
@@ -338,6 +338,50 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
   onClear: () => void; artifactOpen: boolean; artifactTab: 'browser' | 'file';
   onToggleArtifact: () => void; onArtifactTabChange: (t: 'browser' | 'file') => void;
 }) {
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const [isNearBottom, setIsNearBottom] = useState(true);
+  const [showNewMsgBtn, setShowNewMsgBtn] = useState(false);
+  const prevMsgCountRef = useRef(0);
+
+  // Threshold: considered "near bottom" if within 30px
+  const NEAR_BOTTOM_PX = 30;
+
+  const checkNearBottom = () => {
+    const el = scrollRef.current;
+    if (!el) return;
+    const atBottom = el.scrollHeight - el.scrollTop - el.clientHeight < NEAR_BOTTOM_PX;
+    setIsNearBottom(atBottom);
+    if (atBottom) setShowNewMsgBtn(false);
+  };
+
+  const scrollToBottom = (smooth = true) => {
+    const el = scrollRef.current;
+    if (!el) return;
+    el.scrollTo({ top: el.scrollHeight, behavior: smooth ? 'smooth' : 'instant' });
+    setShowNewMsgBtn(false);
+    setIsNearBottom(true);
+  };
+
+  // Auto-scroll when new messages arrive (only if user is near bottom)
+  useEffect(() => {
+    if (messages.length === prevMsgCountRef.current) return;
+    prevMsgCountRef.current = messages.length;
+
+    if (isNearBottom) {
+      // Use requestAnimationFrame to wait for DOM render
+      requestAnimationFrame(() => scrollToBottom(false));
+    } else {
+      setShowNewMsgBtn(true);
+    }
+  }, [messages.length, isNearBottom]);
+
+  // During streaming, keep scrolling if user was at bottom
+  useEffect(() => {
+    if (streaming && isNearBottom) {
+      requestAnimationFrame(() => scrollToBottom(false));
+    }
+  }, [messages, streaming, isNearBottom]);
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
       {hasSession ? (
@@ -357,8 +401,8 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
           </div>
           <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
             {/* Messages */}
-            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0 }}>
-              <div style={{ flex: 1, overflowY: 'auto', padding: '24px 32px' }}>
+            <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0, position: 'relative' }}>
+              <div ref={scrollRef} onScroll={checkNearBottom} style={{ flex: 1, overflowY: 'auto', padding: '24px 32px' }}>
                 {messages.map((msg) => {
                   const isUser = msg.role === 'user';
                   return (
@@ -384,6 +428,21 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
                   );
                 })}
               </div>
+              {/* Floating "new messages" button */}
+              {showNewMsgBtn && (
+                <div style={{ position: 'absolute', bottom: 80, left: '50%', transform: 'translateX(-50%)', zIndex: 10 }}>
+                  <Button
+                    type="primary"
+                    shape="round"
+                    size="small"
+                    icon={<ArrowDownOutlined />}
+                    onClick={() => scrollToBottom(true)}
+                    style={{ boxShadow: '0 2px 8px rgba(0,0,0,0.15)' }}
+                  >
+                    新消息
+                  </Button>
+                </div>
+              )}
               <ChatInputArea value={chatInput} onChange={onChatInputChange} onSend={onSend} />
             </div>
             {/* Artifact sidebar */}

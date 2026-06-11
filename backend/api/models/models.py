@@ -1,7 +1,7 @@
 """SQLAlchemy models — all entities the frontend needs."""
 
 from datetime import datetime
-from sqlalchemy import String, Text, Boolean, Integer, Float, JSON, ForeignKey, DateTime, LargeBinary, UniqueConstraint
+from sqlalchemy import String, Text, Boolean, Integer, Float, JSON, ForeignKey, DateTime, UniqueConstraint
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 from api.database import Base
 
@@ -93,9 +93,10 @@ class Skill(Base):
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     updated_by: Mapped[str] = mapped_column(String(100), default="anonymous")
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-    # Uploaded skill package (.zip) kept as a BLOB so it can be downloaded /
-    # re-uploaded to other agents. ``body`` holds the extracted SKILL.md text.
-    zip_data: Mapped[bytes | None] = mapped_column(LargeBinary)
+    # Uploaded skill package (.zip) saved to ``skills/`` directory on disk.
+    # ``file_path`` stores the relative path (e.g. ``skills/{id}.zip``).
+    # ``body`` holds the extracted SKILL.md text.
+    file_path: Mapped[str | None] = mapped_column(String(500))
     filename: Mapped[str | None] = mapped_column(String(500))
 
 
@@ -193,3 +194,17 @@ class ModifyRecord(Base):
     action: Mapped[str] = mapped_column(String(500), nullable=False)
     detail: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class ModelConfig(Base):
+    """LLM model provider configuration — stores baseUrl + apiKey per provider."""
+    __tablename__ = "model_configs"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    provider: Mapped[str] = mapped_column(String(50), nullable=False)  # deepseek | glm | minimax | qianwen
+    name: Mapped[str] = mapped_column(String(200), nullable=False)     # display name
+    model_id: Mapped[str] = mapped_column(String(100), nullable=False) # model identifier for API calls
+    base_url: Mapped[str] = mapped_column(String(500), nullable=False) # Anthropic-compatible base URL
+    api_key: Mapped[str] = mapped_column(String(500), nullable=False)  # API key
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

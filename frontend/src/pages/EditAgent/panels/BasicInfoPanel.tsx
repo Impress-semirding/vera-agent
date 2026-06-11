@@ -1,16 +1,11 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { Form, Input, Select, Switch, Button, Avatar, message } from 'antd';
 import { RobotOutlined, EditOutlined } from '@ant-design/icons';
 import type { Agent } from '@/types/agent';
 import { agentService } from '@/services/agentService';
+import { modelConfigService } from '@/services/modelConfigService';
+import type { ModelOption } from '@/types/modelConfig';
 import { FormCard, FormRow } from '@/pages/EditAgent/components/FormParts';
-
-const MODELS = [
-  { label: 'GLM-5.1', value: 'glm-5-1' },
-  { label: 'Claude 3 Opus', value: 'claude-3-opus' },
-  { label: 'DeepSeek V4 Flash', value: 'deepseek-v4-flash' },
-  { label: 'DeepSeek V4 Pro', value: 'deepseek-v4-pro' },
-];
 
 interface Values {
   name: string;
@@ -22,6 +17,15 @@ interface Values {
 export default function BasicInfoPanel({ agentId, agent }: { agentId: string; agent: Agent }) {
   const [form] = Form.useForm<Values>();
   const [saving, setSaving] = useState(false);
+  const [modelOptions, setModelOptions] = useState<ModelOption[]>([]);
+
+  useEffect(() => {
+    modelConfigService.listModels().then(res => {
+      setModelOptions(res.data ?? []);
+    }).catch(() => {
+      // silently fail — dropdown will be empty
+    });
+  }, []);
 
   const handleFinish = async (values: Values) => {
     if (saving) return;
@@ -71,7 +75,12 @@ export default function BasicInfoPanel({ agentId, agent }: { agentId: string; ag
 
           <FormRow label="使用模型" required>
             <Form.Item name="model" noStyle rules={[{ required: true, message: '请选择模型' }]}>
-              <Select options={MODELS} style={{ width: '100%' }} />
+              <Select
+                options={modelOptions.map(m => ({ label: m.label, value: m.value }))}
+                placeholder="请选择模型（需先在模型配置中添加）"
+                style={{ width: '100%' }}
+                notFoundContent="暂无模型，请先在「模型配置」中添加"
+              />
             </Form.Item>
           </FormRow>
 

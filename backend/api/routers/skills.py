@@ -15,6 +15,8 @@ given agent cannot hold two skills with the same name (HTTP 409).
 
 from __future__ import annotations
 
+import os
+
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, UploadFile
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -29,6 +31,14 @@ from api.util import jload, new_id
 router = APIRouter(tags=["skills"])
 
 _ZIP_MEDIA = "application/zip"
+
+# Absolute path to the ``skills/`` directory (sibling of the DB ``db/`` dir).
+_SKILLS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "skills")
+
+
+def _skill_zip_path(skill_id: str) -> str:
+    """Return the filesystem path for a skill's zip package."""
+    return os.path.join(_SKILLS_DIR, f"{skill_id}.zip")
 
 
 def _files_for(skill: M.Skill) -> list[dict]:
@@ -53,7 +63,7 @@ def _skill_out(s: M.Skill) -> dict:
         "model": s.model,
         "version": s.version,
         "enabled": s.enabled,
-        "hasZip": bool(s.zip_data),
+        "hasZip": bool(s.file_path and os.path.isfile(s.file_path)),
         "updatedBy": s.updated_by,
         "updatedAt": iso(s.updated_at),
         "files": _files_for(s),
@@ -130,8 +140,18 @@ async def upload_skill(
     if duplicate is not None:
         raise HTTPException(status_code=409, detail=f"该智能体已存在同名技能「{name}」")
 
+    skill_id = new_id()
+    zip_path = _skill_zip_path(skill_id)
+
+    # Ensure the skills directory exists.
+    os.makedirs(_SKILLS_DIR, exist_ok=True)
+
+    # Write zip to filesystem.
+    with open(zip_path, "wb") as f:
+        f.write(data)
+
     skill = M.Skill(
-        id=new_id(),
+        id=skill_id,
         agent_id=agent_id,
         name=name,
         description=parsed["description"],
@@ -143,7 +163,7 @@ async def upload_skill(
         version=version or "1.0.0",
         enabled=True,
         updated_by=user,
-        zip_data=data,
+        file_path=zip_path,
         filename=file.filename or f"{name}.zip",
     )
     db.add(skill)
@@ -155,11 +175,13 @@ async def upload_skill(
 @router.get("/skills/{skill_id}/download")
 async def download_skill(skill_id: str, db: AsyncSession = Depends(get_db)):
     skill = await _get_skill(db, skill_id)
-    if not skill.zip_data:
+    if not skill.file_path or not os.path.isfile(skill.file_path):
         raise HTTPException(status_code=404, detail="该技能没有可下载的 zip 包")
     filename = skill.filename or f"{skill.name}.zip"
+    with open(skill.file_path, "rb") as f:
+        content = f.read()
     return Response(
-        content=skill.zip_data,
+        content=content,
         media_type=_ZIP_MEDIA,
         headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
@@ -190,6 +212,9 @@ async def update_skill(
 @router.delete("/skills/{skill_id}")
 async def delete_skill(skill_id: str, db: AsyncSession = Depends(get_db)):
     skill = await _get_skill(db, skill_id)
+    # Remove zip file from disk if it exists.
+    if skill.file_path and os.path.isfile(skill.file_path):
+        os.remove(skill.file_path)
     await db.delete(skill)
     await db.commit()
     return ok(message="deleted")
