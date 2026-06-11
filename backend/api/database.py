@@ -1,0 +1,43 @@
+"""Database engine + session factory."""
+
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
+from sqlalchemy.orm import DeclarativeBase
+
+DATABASE_URL = "sqlite+aiosqlite:///./reasonix.db"
+
+engine = create_async_engine(DATABASE_URL, echo=False)
+async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
+
+
+class Base(DeclarativeBase):
+    pass
+
+
+async def get_db() -> AsyncSession:  # type: ignore[misc]
+    async with async_session() as session:
+        yield session
+
+
+async def init_db() -> None:
+    async with engine.begin() as conn:
+        await conn.run_sync(Base.metadata.create_all)
+        await _migrate(conn)
+
+
+async def _migrate(conn) -> None:
+    """Idempotent column additions for pre-existing SQLite databases.
+
+    ``create_all`` only creates missing tables — it will not add columns to a
+    table that already exists. New nullable columns are ALTERed here so an
+    existing dev database keeps working without a manual wipe. (A unique
+    constraint can't be added to an existing SQLite table without rebuilding
+    it, so (agent_id, name) uniqueness is also enforced in application code.)
+    """
+    # skills: zip_data (BLOB) + filename — uploaded skill package storage.
+    rows = (await conn.execute(text("PRAGMA table_info(skills)"))).fetchall()
+    columns = {r[1] for r in rows}
+    if "zip_data" not in columns:
+        await conn.execute(text("ALTER TABLE skills ADD COLUMN zip_data BLOB"))
+    if "filename" not in columns:
+        await conn.execute(text("ALTER TABLE skills ADD COLUMN filename VARCHAR(500)"))

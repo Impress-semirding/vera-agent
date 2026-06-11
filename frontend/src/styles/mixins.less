@@ -1,0 +1,27 @@
+.card-hover() {
+  transition: box-shadow 0.2s, border-color 0.2s;
+  &:hover {
+    box-shadow: 0 6px 16px 0 rgba(0, 0, 0, 0.08), 0 3px 6px -4px rgba(0, 0, 0, 0.12);
+    border-color: @border-light;
+  }
+}
+
+.form-card() {
+  background: @white;
+  border: 1px solid @border-light;
+  border-radius: @border-radius-lg;
+  padding: 24px;
+}
+
+.ellipsis(@lines: 1) {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  when (@lines = 1) {
+    white-space: nowrap;
+  }
+  when (@lines > 1) {
+    display: -webkit-box;
+    -webkit-line-clamp: @lines;
+    -webkit-box-orient: vertical;
+  }
+}
