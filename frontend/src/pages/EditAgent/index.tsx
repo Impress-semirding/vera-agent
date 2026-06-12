@@ -9,7 +9,7 @@ import {
   PlusOutlined, SendOutlined, PaperClipOutlined,
   DownloadOutlined, RobotOutlined, UserOutlined,
   TeamOutlined, FileTextOutlined, CodeOutlined,
-  GlobalOutlined, FileOutlined, CloseOutlined, ColumnWidthOutlined,
+  GlobalOutlined, FileOutlined, CloseOutlined, ColumnWidthOutlined, StopOutlined,
 } from '@ant-design/icons';
 import { useAgentStore } from '@/stores/useAgentStore';
 import { agentService } from '@/services/agentService';
@@ -24,6 +24,49 @@ import BaseConfigPanel from './panels/BaseConfigPanel';
 import ToolConfigPanel from './panels/ToolConfigPanel';
 import SkillConfigPanel from './panels/SkillConfigPanel';
 import s from './index.module.less';
+
+// ─── Time formatting ────────────────────────────────
+function pad(n: number): string {
+  return n < 10 ? `0${n}` : `${n}`;
+}
+
+/**
+ * Format a message timestamp for display.
+ *   Today        → 14:22
+ *   Yesterday    → 昨天 14:22
+ *   This year    → 6月10日 14:22
+ *   Older        → 2024/12/25 09:30
+ * Hover title shows full YYYY/M/D HH:mm:ss.
+ */
+function formatMsgTime(timestamp?: string): { label: string; title: string } {
+  if (!timestamp) return { label: '', title: '' };
+  const d = new Date(timestamp);
+  if (isNaN(d.getTime())) return { label: '', title: '' };
+
+  const now = new Date();
+  const hhmm = `${pad(d.getHours())}:${pad(d.getMinutes())}`;
+
+  const isToday = d.toDateString() === now.toDateString();
+  if (isToday) {
+    return { label: hhmm, title: `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}` };
+  }
+
+  const yesterday = new Date(now);
+  yesterday.setDate(yesterday.getDate() - 1);
+  if (d.toDateString() === yesterday.toDateString()) {
+    return { label: `昨天 ${hhmm}`, title: `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}` };
+  }
+
+  const full = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  const sameYear = d.getFullYear() === now.getFullYear();
+  if (sameYear) {
+    const dateLabel = `${d.getMonth() + 1}月${d.getDate()}日 ${hhmm}`;
+    return { label: dateLabel, title: `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${full}` };
+  }
+
+  const dateLabel = `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${hhmm}`;
+  return { label: dateLabel, title: `${d.getFullYear()}/${d.getMonth() + 1}/${d.getDate()} ${full}` };
+}
 
 // ─── Types ────────────────────────────────────────
 type SidebarTab = 'session' | 'config';
@@ -110,14 +153,13 @@ export default function EditAgentPage() {
     },
     [agentId, navigate],
   );
-  const { messages, streaming, send, clear } = useChatSocket(
+  const { messages, streaming, send, stop, clear } = useChatSocket(
     agentId,
     sessionId,
     handleSessionCreated,
   );
 
   const handleSend = () => {
-    if (streaming) return;
     const text = chatInput;
     if (!text.trim()) return;
     if (!sessionId) {
@@ -246,6 +288,7 @@ export default function EditAgentPage() {
             chatInput={chatInput}
             onChatInputChange={setChatInput}
             onSend={handleSend}
+            onStop={stop}
             onClear={clear}
             artifactOpen={artifactOpen}
             artifactTab={artifactTab}
@@ -329,12 +372,12 @@ export default function EditAgentPage() {
 // ═══════════════════════════════════════════════════
 
 // ─── Chat Panel ─────────────────────────────────
-function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, streaming, chatInput, onChatInputChange, onSend, onClear, artifactOpen, artifactTab, onToggleArtifact, onArtifactTabChange }: {
+function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, streaming, chatInput, onChatInputChange, onSend, onStop, onClear, artifactOpen, artifactTab, onToggleArtifact, onArtifactTabChange }: {
   agentName: string; agentType: string; sessionName: string;
   hasSession: boolean;
   messages: ChatMsg[];
   streaming: boolean;
-  chatInput: string; onChatInputChange: (v: string) => void; onSend: () => void;
+  chatInput: string; onChatInputChange: (v: string) => void; onSend: () => void; onStop: () => void;
   onClear: () => void; artifactOpen: boolean; artifactTab: 'browser' | 'file';
   onToggleArtifact: () => void; onArtifactTabChange: (t: 'browser' | 'file') => void;
 }) {
@@ -405,9 +448,15 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
               <div ref={scrollRef} onScroll={checkNearBottom} style={{ flex: 1, overflowY: 'auto', padding: '24px 32px' }}>
                 {messages.map((msg) => {
                   const isUser = msg.role === 'user';
+                  const { label: timeLabel, title: timeTitle } = formatMsgTime(msg.timestamp);
                   return (
                     <div key={msg.id} style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start', marginBottom: 16 }}>
-                      <div style={{ maxWidth: '70%', display: 'flex', flexDirection: 'column', gap: 6 }}>
+                      <div style={{ maxWidth: '70%', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                        {timeLabel ? (
+                          <div style={{ fontSize: 13, color: '#00000073', textAlign: isUser ? 'right' : 'left', padding: '0 4px' }} title={timeTitle}>
+                            {timeLabel}
+                          </div>
+                        ) : null}
                         {!isUser && msg.reasoning ? (
                           <div style={{ fontSize: 12, color: '#00000073', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 8, padding: '8px 12px', whiteSpace: 'pre-wrap' }}>
                             <div style={{ fontWeight: 500, marginBottom: 4 }}>🧠 思考过程</div>
@@ -443,7 +492,7 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
                   </Button>
                 </div>
               )}
-              <ChatInputArea value={chatInput} onChange={onChatInputChange} onSend={onSend} />
+              <ChatInputArea value={chatInput} onChange={onChatInputChange} onSend={onSend} onStop={onStop} streaming={streaming} />
             </div>
             {/* Artifact sidebar */}
             {artifactOpen && <ArtifactSidebar tab={artifactTab} onTabChange={onArtifactTabChange} onClose={onToggleArtifact} />}
@@ -460,7 +509,7 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
             <span style={{ fontWeight: 500, color: '#000000a6' }}>{agentName}</span> · {agentType === 'system' ? '系统虾' : '个人虾'}
           </p>
           <div style={{ width: '100%', maxWidth: 640 }}>
-            <ChatInputArea value={chatInput} onChange={onChatInputChange} onSend={onSend} large />
+            <ChatInputArea value={chatInput} onChange={onChatInputChange} onSend={onSend} onStop={onStop} streaming={streaming} large />
             <p style={{ fontSize: 12, textAlign: 'center', color: '#00000040', marginTop: 8 }}>Enter 发送 · Shift+Enter 换行</p>
           </div>
         </div>
@@ -470,9 +519,18 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
 }
 
 // ─── Chat Input Area ─────────────────────────────
-function ChatInputArea({ value, onChange, onSend, large }: {
-  value: string; onChange: (v: string) => void; onSend: () => void; large?: boolean;
+function ChatInputArea({ value, onChange, onSend, onStop, streaming, large }: {
+  value: string; onChange: (v: string) => void; onSend: () => void; onStop: () => void;
+  streaming?: boolean; large?: boolean;
 }) {
+  // Button logic:
+  //   streaming + input empty → show stop button
+  //   streaming + input has text → show send button (queue next message)
+  //   not streaming → show send button (normal)
+  const inputHasText = value.trim().length > 0;
+  const showStop = streaming && !inputHasText;
+  const canSend = inputHasText;
+
   return (
     <div style={{ flexShrink: 0, background: '#fff', borderTop: '1px solid #f0f0f0', padding: large ? 0 : '16px 24px' }}>
       <div style={{ maxWidth: large ? '100%' : 1152, margin: large ? undefined : '0 auto' }}>
@@ -483,13 +541,32 @@ function ChatInputArea({ value, onChange, onSend, large }: {
             placeholder="发送消息…"
             autoSize={{ minRows: large ? 5 : 3, maxRows: 9 }}
             style={{ border: 'none', boxShadow: 'none', resize: 'none', padding: '12px 16px 4px', borderRadius: 12 }}
-            onPressEnter={(e) => { if (!e.shiftKey) { e.preventDefault(); onSend(); } }}
+            onPressEnter={(e) => { if (!e.shiftKey && canSend) { e.preventDefault(); onSend(); } }}
           />
           <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 16px 10px' }}>
             <div style={{ display: 'flex', gap: 12, color: '#00000040', fontSize: 14 }}>
               <PaperClipOutlined style={{ cursor: 'pointer' }} />
             </div>
-            <Button type="primary" size="small" icon={<SendOutlined />} onClick={onSend}>发送</Button>
+            {showStop ? (
+              <Button
+                danger
+                size="small"
+                icon={<StopOutlined />}
+                onClick={onStop}
+              >
+                停止
+              </Button>
+            ) : (
+              <Button
+                type="primary"
+                size="small"
+                icon={<SendOutlined />}
+                onClick={onSend}
+                disabled={!canSend}
+              >
+                发送
+              </Button>
+            )}
           </div>
         </div>
       </div>

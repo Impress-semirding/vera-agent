@@ -10,25 +10,30 @@ export interface ChatMsg {
   content: string;
   reasoning?: string;
   pending?: boolean;
+  turnId?: string;
+  timestamp?: string;
 }
 
 export type ChatStatus = 'idle' | 'connecting' | 'open' | 'closed';
 
 function wsBase(): string {
-  // Derive ws/wss from the page location; vite proxies /api → backend (ws too).
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
   return `${proto}://${window.location.host}/api/v1`;
 }
 
+// Reconnect configuration
+const RECONNECT_BASE_DELAY = 1000; // ms
+const RECONNECT_MAX_DELAY = 30000; // ms
+const RECONNECT_MAX_ATTEMPTS = 10;
+
 /**
  * Drives a streaming chat over a WebSocket for one (agentId, sessionId).
  *
+ * Features:
  * - Loads message history from the REST API when the session changes.
- * - Opens a WebSocket once a real session exists and reduces server events
- *   (`model_delta` reasoning/content, `model_final`) into the message list,
- *   appending tokens one at a time so the UI types them out.
- * - On the very first message (no session yet) it creates the session, lets
- *   the caller update the URL, and buffers the message until the socket opens.
+ * - Auto-reconnect with exponential backoff on unexpected disconnect.
+ * - Heartbeat (ping/pong) to detect dead connections.
+ * - Buffers outbound messages until the socket is open.
  */
 export function useChatSocket(
   agentId: string | undefined,
@@ -40,11 +45,12 @@ export function useChatSocket(
   const [streaming, setStreaming] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
-  const pendingRef = useRef<string | null>(null); // message buffered until the socket opens
-  const creatingRef = useRef(false); // guards against double session creation
+  const pendingRef = useRef<string | null>(null);
+  const creatingRef = useRef(false);
+  const reconnectAttemptRef = useRef(0);
+  const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const intentionalCloseRef = useRef(false);
 
-  // Keep the latest event handler so the WS closure (created once per session)
-  // always calls the current version without reconnecting.
   const handleEventRef = useRef<(data: any) => void>(() => {});
 
   const handleEvent = useCallback(
@@ -60,42 +66,101 @@ export function useChatSocket(
         return;
       }
       if (t === 'ready') {
-        return; // handshake done
+        return;
+      }
+      if (t === 'stopped') {
+        // Current turn was aborted. Set false for now; if queue has more
+        // messages, the worker will send another turn_start immediately.
+        setStreaming(false);
+        return;
+      }
+      if (t === 'turn_start') {
+        // Worker picked up a message from the queue — pre-create assistant message with turnId.
+        const tid = data?.turnId;
+        if (tid) {
+          setStreaming(true);
+          setMessages((prev) => {
+            // Avoid duplicate if somehow already exists.
+            if (prev.some((m) => m.turnId === tid)) return prev;
+            return [...prev, {
+              id: `a-${Date.now()}-${Math.random()}`,
+              role: 'assistant' as const,
+              content: '',
+              reasoning: '',
+              pending: true,
+              turnId: tid,
+              timestamp: new Date().toISOString(),
+            }];
+          });
+        } else {
+          setStreaming(true);
+        }
+        return;
+      }
+      if (t === 'ping') {
+        // Respond to server heartbeat
+        const ws = wsRef.current;
+        if (ws && ws.readyState === WebSocket.OPEN) {
+          ws.send(JSON.stringify({ type: 'pong' }));
+        }
+        return;
       }
       if (t === 'user_message') {
-        // Server-authoritative user bubble (we don't optimistically append).
-        const text: string = data?.text ?? '';
-        setMessages((prev) => [...prev, { id: `u-${Date.now()}-${Math.random()}`, role: 'user', content: text }]);
+        // Server echo of user message — already added optimistically in send().
+        // Ignore to avoid duplicates.
         return;
       }
       if (t === 'model_delta') {
         const channel = data?.channel;
         const text: string = data?.text ?? '';
+        const tid = data?.turnId;
         setMessages((prev) => {
           const next = [...prev];
-          let last = next[next.length - 1];
-          if (!last || last.role !== 'assistant' || !last.pending) {
-            last = { id: `a-${Date.now()}-${Math.random()}`, role: 'assistant', content: '', reasoning: '', pending: true };
-            next.push(last);
+          // Find the assistant message by turnId, or fall back to last pending assistant.
+          let idx = tid ? next.findIndex((m) => m.turnId === tid) : -1;
+          if (idx === -1) {
+            idx = next.length - 1;
+            const last = next[idx];
+            if (!last || last.role !== 'assistant' || !last.pending) {
+              // No matching message — create one.
+              const msg: ChatMsg = {
+                id: `a-${Date.now()}-${Math.random()}`,
+                role: 'assistant',
+                content: '',
+                reasoning: '',
+                pending: true,
+                turnId: tid || undefined,
+                timestamp: new Date().toISOString(),
+              };
+              next.push(msg);
+              idx = next.length - 1;
+            }
           }
+          const target = next[idx];
           if (channel === 'reasoning') {
-            next[next.length - 1] = { ...last, reasoning: (last.reasoning || '') + text };
+            next[idx] = { ...target, reasoning: (target.reasoning || '') + text };
           } else {
-            next[next.length - 1] = { ...last, content: (last.content || '') + text };
+            next[idx] = { ...target, content: (target.content || '') + text };
           }
           return next;
         });
         return;
       }
       if (t === 'model_final') {
+        const tid = data?.turnId;
         setMessages((prev) => {
           const next = [...prev];
-          const last = next[next.length - 1];
-          if (last && last.role === 'assistant') {
-            next[next.length - 1] = {
-              ...last,
-              content: typeof data.content === 'string' ? data.content : last.content,
-              reasoning: typeof data.reasoningContent === 'string' ? data.reasoningContent : last.reasoning,
+          // Find by turnId first, then fall back to last assistant message.
+          let idx = tid ? next.findIndex((m) => m.turnId === tid) : -1;
+          if (idx === -1) {
+            idx = next.length - 1;
+          }
+          const target = next[idx];
+          if (target && target.role === 'assistant') {
+            next[idx] = {
+              ...target,
+              content: typeof data.content === 'string' ? data.content : target.content,
+              reasoning: typeof data.reasoningContent === 'string' ? data.reasoningContent : target.reasoning,
               pending: false,
             };
           }
@@ -109,7 +174,7 @@ export function useChatSocket(
 
   handleEventRef.current = handleEvent;
 
-  // Load history when the session changes.
+  // ─── Load history when session changes ───
   useEffect(() => {
     if (!sessionId) {
       setMessages([]);
@@ -126,6 +191,7 @@ export function useChatSocket(
             role: m.role === 'assistant' ? 'assistant' : 'user',
             content: m.content || '',
             reasoning: m.reasoningContent || undefined,
+            timestamp: m.timestamp,
           })),
         );
       })
@@ -135,9 +201,13 @@ export function useChatSocket(
     };
   }, [sessionId]);
 
-  // Open the WebSocket whenever we have a real session to chat in.
-  useEffect(() => {
+  // ─── Connect / reconnect logic ───
+  const connectRef = useRef<() => void>(() => {});
+
+  connectRef.current = () => {
     if (!agentId || !sessionId) return;
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) return;
+
     setStatus('connecting');
     const ws = new WebSocket(
       `${wsBase()}/chat/${agentId}/${sessionId}?user=${encodeURIComponent(getUserName() ?? '')}`,
@@ -146,11 +216,14 @@ export function useChatSocket(
 
     ws.onopen = () => {
       setStatus('open');
+      reconnectAttemptRef.current = 0; // reset on successful connect
+      // Send any buffered message
       if (pendingRef.current) {
         ws.send(JSON.stringify({ type: 'user_input', text: pendingRef.current }));
         pendingRef.current = null;
       }
     };
+
     ws.onmessage = (ev) => {
       let data: any;
       try {
@@ -160,23 +233,76 @@ export function useChatSocket(
       }
       handleEventRef.current(data);
     };
-    ws.onclose = () => setStatus('closed');
-    ws.onerror = () => setStatus('closed');
+
+    ws.onclose = (ev) => {
+      wsRef.current = null;
+      setStatus('closed');
+      // Auto-reconnect unless intentionally closed or normal closure
+      if (!intentionalCloseRef.current && !ev.wasClean) {
+        scheduleReconnect();
+      }
+    };
+
+    ws.onerror = () => {
+      // onclose will fire after this, which handles reconnect
+    };
+  };
+
+  const scheduleReconnect = () => {
+    const attempt = reconnectAttemptRef.current;
+    if (attempt >= RECONNECT_MAX_ATTEMPTS) return;
+
+    const delay = Math.min(RECONNECT_BASE_DELAY * Math.pow(2, attempt), RECONNECT_MAX_DELAY);
+    reconnectAttemptRef.current = attempt + 1;
+
+    console.log(`[ws] reconnecting in ${delay}ms (attempt ${attempt + 1}/${RECONNECT_MAX_ATTEMPTS})`);
+    reconnectTimerRef.current = setTimeout(() => {
+      connectRef.current();
+    }, delay);
+  };
+
+  // ─── Open/close WebSocket when session changes ───
+  useEffect(() => {
+    // Clean up previous connection
+    intentionalCloseRef.current = true;
+    if (reconnectTimerRef.current) {
+      clearTimeout(reconnectTimerRef.current);
+      reconnectTimerRef.current = null;
+    }
+    if (wsRef.current) {
+      wsRef.current.close();
+      wsRef.current = null;
+    }
+    reconnectAttemptRef.current = 0;
+
+    if (!agentId || !sessionId) {
+      setStatus('idle');
+      return;
+    }
+
+    // Open new connection
+    intentionalCloseRef.current = false;
+    connectRef.current();
 
     return () => {
-      ws.close();
-      wsRef.current = null;
+      intentionalCloseRef.current = true;
+      if (reconnectTimerRef.current) {
+        clearTimeout(reconnectTimerRef.current);
+        reconnectTimerRef.current = null;
+      }
+      if (wsRef.current) {
+        wsRef.current.close();
+        wsRef.current = null;
+      }
     };
   }, [agentId, sessionId]);
 
   const send = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
-      if (!trimmed || !agentId || streaming) return;
+      if (!trimmed || !agentId) return;
 
-      // No session yet → create one and switch the URL, but do NOT send the
-      // text. The caller keeps it in the input box; the user sends again once
-      // the socket for the new session is open. (No streaming starts here.)
+      // No session yet → create one
       if (!sessionId) {
         if (creatingRef.current) return;
         creatingRef.current = true;
@@ -191,18 +317,38 @@ export function useChatSocket(
         return;
       }
 
-      setStreaming(true);
+      // Optimistically add user message to chat immediately (real send order).
+      // Server's user_message echo is ignored to avoid duplicates.
+      setMessages((prev) => [...prev, {
+        id: `u-${Date.now()}-${Math.random()}`,
+        role: 'user',
+        content: trimmed,
+        timestamp: new Date().toISOString(),
+      }]);
+
       const ws = wsRef.current;
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'user_input', text: trimmed }));
       } else {
         pendingRef.current = trimmed; // buffer until (re)connected
+        // Try to reconnect if closed
+        if (!ws || ws.readyState === WebSocket.CLOSED) {
+          reconnectAttemptRef.current = 0;
+          connectRef.current();
+        }
       }
     },
-    [agentId, sessionId, streaming, onSessionCreated],
+    [agentId, sessionId, onSessionCreated],
   );
+
+  const stop = useCallback(() => {
+    const ws = wsRef.current;
+    if (ws && ws.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: 'abort' }));
+    }
+  }, []);
 
   const clear = useCallback(() => setMessages([]), []);
 
-  return { messages, status, streaming, send, clear };
+  return { messages, status, streaming, send, stop, clear };
 }

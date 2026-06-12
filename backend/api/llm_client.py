@@ -14,6 +14,8 @@ class LLMClient:
 
     def __init__(self) -> None:
         self._process: asyncio.subprocess.Process | None = None
+        self._stderr_task: asyncio.Task | None = None
+        self.eof: bool = False
 
     async def start(
         self,
@@ -30,6 +32,9 @@ class LLMClient:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
+        # Drain stderr in the background to prevent pipe-buffer deadlock.
+        # If stderr fills up (typically 64 KB), the subprocess would block.
+        self._stderr_task = asyncio.create_task(self._drain_stderr())
         # Send start config
         config = {
             "type": "start",
@@ -49,10 +54,17 @@ class LLMClient:
         await self._send({"type": "user_input", "text": text})
 
     async def read_deltas(self) -> AsyncIterator[dict]:
-        """Yield JSON events from stdout until model_final is received."""
+        """Yield JSON events from stdout until model_final is received.
+
+        Sets self.eof = True if the subprocess closed stdout (died).
+        """
         while True:
             event = await self._read_line()
             if event is None:
+                # Subprocess closed stdout (crashed or exited).
+                # Signal that the subprocess is dead so the caller can
+                # avoid reusing it.
+                self.eof = True
                 return
             yield event
             if event.get("type") in ("model_final", "error"):
@@ -60,6 +72,13 @@ class LLMClient:
 
     async def close(self) -> None:
         """Shut down the subprocess gracefully."""
+        if self._stderr_task:
+            self._stderr_task.cancel()
+            try:
+                await self._stderr_task
+            except (asyncio.CancelledError, Exception):
+                pass
+            self._stderr_task = None
         if self._process and self._process.returncode is None:
             try:
                 await self._send({"type": "quit"})
@@ -74,6 +93,26 @@ class LLMClient:
                 except Exception:
                     pass
             self._process = None
+
+    def is_alive(self) -> bool:
+        """Check if the subprocess is still running."""
+        return self._process is not None and self._process.returncode is None
+
+    async def _drain_stderr(self) -> None:
+        """Consume stderr in the background to prevent pipe-buffer deadlock."""
+        try:
+            while True:
+                if not self._process or not self._process.stderr:
+                    return
+                line = await self._process.stderr.readline()
+                if not line:
+                    return
+                # Log stderr output for debugging.
+                print(f"[llm-subprocess] {line.decode('utf-8', errors='replace').rstrip()}", flush=True)
+        except asyncio.CancelledError:
+            return
+        except Exception:
+            return
 
     async def _send(self, obj: dict) -> None:
         """Write a JSON line to subprocess stdin."""
