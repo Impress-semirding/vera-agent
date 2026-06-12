@@ -5,20 +5,22 @@ import { ArrowLeftOutlined } from '@ant-design/icons';
 import { useAgentStore } from '@/stores/useAgentStore';
 import ModeSelectModal from './ModeSelectModal';
 import BasicInfoForm from './BasicInfoForm';
-import type { AgentType, AgentFormData } from '@/types/agent';
+import type { AgentType, AppMode, AgentFormData } from '@/types/agent';
 
 export default function CreateAgentPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
-  const { mode, createAgent } = useAgentStore();
+  const { createAgent } = useAgentStore();
 
   const preselectedType = searchParams.get('mode') as AgentType | null;
   const [agentType, setAgentType] = useState<AgentType | null>(preselectedType);
+  const [appMode, setAppMode] = useState<AppMode>('claude');
   const [showModal, setShowModal] = useState(!preselectedType);
   const [submitting, setSubmitting] = useState(false);
 
-  const handleSelectType = (type: AgentType) => {
+  const handleSelectType = (type: AgentType, mode: AppMode) => {
     setAgentType(type);
+    setAppMode(mode);
     setShowModal(false);
   };
 
@@ -59,7 +61,7 @@ export default function CreateAgentPage() {
       {agentType && (
         <BasicInfoForm
           agentType={agentType}
-          mode={mode}
+          mode={appMode}
           submitting={submitting}
           onSubmit={handleSubmit}
           onBack={() => navigate('/')}

@@ -1,14 +1,15 @@
-import { Modal, Card } from 'antd';
-import { RobotOutlined, UserOutlined } from '@ant-design/icons';
-import type { AgentType } from '@/types/agent';
+import { useState } from 'react';
+import { Modal, Card, Radio } from 'antd';
+import { RobotOutlined, UserOutlined, ThunderboltOutlined, ToolOutlined } from '@ant-design/icons';
+import type { AgentType, AppMode } from '@/types/agent';
 
 interface Props {
   open: boolean;
-  onSelect: (type: AgentType) => void;
+  onSelect: (type: AgentType, mode: AppMode) => void;
   onCancel: () => void;
 }
 
-const MODES: { type: AgentType; icon: React.ReactNode; title: string; desc: string; features: string[] }[] = [
+const AGENT_TYPES: { type: AgentType; icon: React.ReactNode; title: string; desc: string; features: string[] }[] = [
   {
     type: 'system',
     icon: <RobotOutlined style={{ fontSize: 32, color: '#1677ff' }} />,
@@ -26,6 +27,8 @@ const MODES: { type: AgentType; icon: React.ReactNode; title: string; desc: stri
 ];
 
 export default function ModeSelectModal({ open, onSelect, onCancel }: Props) {
+  const [appMode, setAppMode] = useState<AppMode>('claude');
+
   return (
     <Modal
       title="选择智能体类型"
@@ -35,25 +38,73 @@ export default function ModeSelectModal({ open, onSelect, onCancel }: Props) {
       width={640}
       centered
     >
-      <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, padding: '16px 0' }}>
-        {MODES.map((m) => (
+      {/* Mode toggle */}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 0 8px' }}>
+        <span style={{ fontSize: 13, color: '#00000073', whiteSpace: 'nowrap' }}>运行模式</span>
+        <Radio.Group
+          value={appMode}
+          onChange={(e) => setAppMode(e.target.value)}
+          optionType="button"
+          buttonStyle="solid"
+          size="middle"
+        >
+          <Radio.Button value="claude">
+            <ThunderboltOutlined style={{ marginRight: 6 }} />
+            Claude 模式
+          </Radio.Button>
+          <Radio.Button value="normal">
+            <ToolOutlined style={{ marginRight: 6 }} />
+            普通模式
+          </Radio.Button>
+        </Radio.Group>
+      </div>
+
+      {/* Claude mode: show system / personal cards */}
+      {appMode === 'claude' && (
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, padding: '8px 0 16px' }}>
+          {AGENT_TYPES.map((m) => (
+            <Card
+              key={m.type}
+              hoverable
+              style={{ cursor: 'pointer', textAlign: 'center' }}
+              onClick={() => onSelect(m.type, 'claude')}
+            >
+              <div style={{ marginBottom: 12 }}>{m.icon}</div>
+              <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>{m.title}</div>
+              <div style={{ fontSize: 13, color: '#00000073', marginBottom: 12 }}>{m.desc}</div>
+              <ul style={{ textAlign: 'left', fontSize: 12, color: '#00000073', listStyle: 'disc', paddingLeft: 16 }}>
+                {m.features.map((f, i) => (
+                  <li key={i}>{f}</li>
+                ))}
+              </ul>
+            </Card>
+          ))}
+        </div>
+      )}
+
+      {/* Normal mode: self-built agent description */}
+      {appMode === 'normal' && (
+        <div style={{ padding: '16px 0' }}>
           <Card
-            key={m.type}
             hoverable
             style={{ cursor: 'pointer', textAlign: 'center' }}
-            onClick={() => onSelect(m.type)}
+            onClick={() => onSelect('personal', 'normal')}
           >
-            <div style={{ marginBottom: 12 }}>{m.icon}</div>
-            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>{m.title}</div>
-            <div style={{ fontSize: 13, color: '#00000073', marginBottom: 12 }}>{m.desc}</div>
-            <ul style={{ textAlign: 'left', fontSize: 12, color: '#00000073', listStyle: 'disc', paddingLeft: 16 }}>
-              {m.features.map((f, i) => (
-                <li key={i}>{f}</li>
-              ))}
+            <div style={{ marginBottom: 12 }}>
+              <ToolOutlined style={{ fontSize: 32, color: '#faad14' }} />
+            </div>
+            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>自建 Agent</div>
+            <div style={{ fontSize: 13, color: '#00000073', marginBottom: 12 }}>
+              使用自定义 LLM 配置，灵活对接各类模型服务
+            </div>
+            <ul style={{ textAlign: 'left', fontSize: 12, color: '#00000073', listStyle: 'disc', paddingLeft: 16, margin: 0 }}>
+              <li>支持对接任意 OpenAI 兼容 API</li>
+              <li>自定义系统提示词和参数</li>
+              <li>个人私有，按需配置</li>
             </ul>
           </Card>
-        ))}
-      </div>
+        </div>
+      )}
     </Modal>
   );
 }
