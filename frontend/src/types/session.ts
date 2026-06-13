@@ -15,6 +15,7 @@ export interface ChatMessage {
   role: 'user' | 'assistant' | 'system';
   content: string;
   reasoningContent?: string;
+  durationMs?: number | null;
   segments?: Array<{
     kind: string;
     text?: string;

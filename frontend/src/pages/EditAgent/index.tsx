@@ -480,6 +480,13 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
                         {timeLabel ? (
                           <div style={{ fontSize: 13, color: '#00000073', textAlign: isUser ? 'right' : 'left', padding: '0 4px' }} title={timeTitle}>
                             {timeLabel}
+                            {!isUser && msg.durationMs != null ? (
+                              <span style={{ marginLeft: 8, color: '#00000040' }}>
+                                执行耗时: {msg.durationMs >= 1000
+                                  ? `${(msg.durationMs / 1000).toFixed(1)}s`
+                                  : `${msg.durationMs}ms`}
+                              </span>
+                            ) : null}
                           </div>
                         ) : null}
                         {isUser ? (

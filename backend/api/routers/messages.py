@@ -47,6 +47,7 @@ def _message_out(m: M.Message) -> dict:
         "content": m.content,
         "reasoningContent": m.reasoning_content,
         "segments": segments,
+        "durationMs": m.duration_ms,
         "timestamp": iso(m.created_at),
         "artifacts": None,
     }

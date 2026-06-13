@@ -31,6 +31,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import time
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -292,6 +293,7 @@ async def _process_turn(
         await _emit_mock_tool_events(ws_holder, turn_id)
 
     # Build segment list as events flow through — matches frontend model
+    turn_start_ms = int(time.time() * 1000)
     segments: list[dict] = []
     content_parts: list[str] = []
     reasoning_parts: list[str] = []
@@ -328,12 +330,14 @@ async def _process_turn(
                 if final_content:
                     _push_seg({"kind": "text", "text": final_content})
                 _try_push(ws_holder, {**event, "turnId": turn_id})
+                duration_ms = int(time.time() * 1000) - turn_start_ms
                 await _persist_message(
                     session_id, "assistant",
                     final_content or "".join(content_parts),
                     final_reasoning or "".join(reasoning_parts),
                     tool_calls=tool_calls if tool_calls else None,
                     segments=segments if segments else None,
+                    duration_ms=duration_ms,
                 )
 
             elif event_type == "tool.intent":
@@ -530,7 +534,7 @@ async def _safe_send(ws: WebSocket, data: dict) -> None:
         pass
 
 
-async def _persist_message(session_id: str, role: str, content: str, reasoning: str | None = None, tool_calls: list[dict] | None = None, segments: list[dict] | None = None) -> None:
+async def _persist_message(session_id: str, role: str, content: str, reasoning: str | None = None, tool_calls: list[dict] | None = None, segments: list[dict] | None = None, duration_ms: int | None = None) -> None:
     try:
         async with async_session() as db:
             db.add(
@@ -541,6 +545,7 @@ async def _persist_message(session_id: str, role: str, content: str, reasoning: 
                     content=content,
                     reasoning_content=reasoning,
                     tool_calls=json.dumps(segments, ensure_ascii=False) if segments else (json.dumps(tool_calls, ensure_ascii=False) if tool_calls else None),
+                    duration_ms=duration_ms,
                 )
             )
             await db.commit()

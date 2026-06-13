@@ -40,6 +40,7 @@ class Message(Base):
     content: Mapped[str | None] = mapped_column(Text)
     reasoning_content: Mapped[str | None] = mapped_column(Text)
     tool_calls: Mapped[str | None] = mapped_column(Text)  # JSON
+    duration_ms: Mapped[int | None] = mapped_column(Integer, nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

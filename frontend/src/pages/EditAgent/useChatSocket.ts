@@ -19,6 +19,7 @@ export interface ChatMsg {
   pending?: boolean;
   turnId?: string;
   timestamp?: string;
+  durationMs?: number;
   segments?: Segment[];
 }
 
@@ -96,6 +97,7 @@ export function useChatSocket(
   const reconnectAttemptRef = useRef(0);
   const reconnectTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const intentionalCloseRef = useRef(false);
+  const turnStartTimes = useRef<Map<string, number>>(new Map());
 
   const handleEventRef = useRef<(data: any) => void>(() => {});
 
@@ -140,6 +142,7 @@ export function useChatSocket(
       if (t === 'turn_start') {
         const tid = data?.turnId;
         if (tid) {
+          turnStartTimes.current.set(tid, Date.now());
           setStreaming(true);
           setMessages((prev) => {
             if (prev.some((m) => m.turnId === tid)) return prev;
@@ -306,11 +309,14 @@ export function useChatSocket(
           const target = next[idx];
           if (target && target.role === 'assistant') {
             const finalContent = (typeof data.content === 'string' && data.content) ? data.content : target.content;
+            const start = tid ? turnStartTimes.current.get(tid) : undefined;
+            const durationMs = start ? Date.now() - start : undefined;
             next[idx] = {
               ...target,
               content: finalContent,
               reasoning: (typeof data.reasoningContent === 'string' && data.reasoningContent) ? data.reasoningContent : target.reasoning,
               pending: false,
+              durationMs,
             };
             // Append final text segment after thinking block (always visible)
             if (finalContent && target.segments != null) {
@@ -348,6 +354,7 @@ export function useChatSocket(
               content: m.content || '',
               reasoning: m.reasoningContent || undefined,
               timestamp: m.timestamp,
+              durationMs: m.durationMs ?? undefined,
             };
             // Use persisted segments if available
             if (m.role === 'assistant' && m.segments && m.segments.length > 0) {
