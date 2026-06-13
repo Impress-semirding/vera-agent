@@ -154,7 +154,7 @@ export default function EditAgentPage() {
     },
     [agentId, navigate],
   );
-  const { messages, streaming, send, stop, clear } = useChatSocket(
+  const { messages, streaming, artifacts, send, stop, clear } = useChatSocket(
     agentId,
     sessionId,
     handleSessionCreated,
@@ -293,6 +293,7 @@ export default function EditAgentPage() {
             onClear={clear}
             artifactOpen={artifactOpen}
             artifactTab={artifactTab}
+            artifacts={artifacts}
             onToggleArtifact={() => setArtifactOpen(!artifactOpen)}
             onArtifactTabChange={setArtifactTab}
           />
@@ -373,13 +374,14 @@ export default function EditAgentPage() {
 // ═══════════════════════════════════════════════════
 
 // ─── Chat Panel ─────────────────────────────────
-function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, streaming, chatInput, onChatInputChange, onSend, onStop, onClear, artifactOpen, artifactTab, onToggleArtifact, onArtifactTabChange }: {
+function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, streaming, chatInput, onChatInputChange, onSend, onStop, onClear, artifactOpen, artifactTab, artifacts, onToggleArtifact, onArtifactTabChange }: {
   agentName: string; agentType: string; sessionName: string;
   hasSession: boolean;
   messages: ChatMsg[];
   streaming: boolean;
   chatInput: string; onChatInputChange: (v: string) => void; onSend: () => void; onStop: () => void;
   onClear: () => void; artifactOpen: boolean; artifactTab: 'browser' | 'file';
+  artifacts: { name: string; path: string; size: number }[];
   onToggleArtifact: () => void; onArtifactTabChange: (t: 'browser' | 'file') => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
@@ -514,7 +516,7 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
               <ChatInputArea value={chatInput} onChange={onChatInputChange} onSend={onSend} onStop={onStop} streaming={streaming} />
             </div>
             {/* Artifact sidebar */}
-            {artifactOpen && <ArtifactSidebar tab={artifactTab} onTabChange={onArtifactTabChange} onClose={onToggleArtifact} />}
+            {artifactOpen && <ArtifactSidebar tab={artifactTab} artifacts={artifacts} onTabChange={onArtifactTabChange} onClose={onToggleArtifact} />}
           </div>
         </>
       ) : (
@@ -594,11 +596,60 @@ function ChatInputArea({ value, onChange, onSend, onStop, streaming, large }: {
 }
 
 // ─── Artifact Sidebar ────────────────────────────
-function ArtifactSidebar({ tab, onTabChange, onClose }: {
-  tab: 'browser' | 'file'; onTabChange: (t: 'browser' | 'file') => void; onClose: () => void;
+function ArtifactSidebar({ tab, artifacts, onTabChange, onClose }: {
+  tab: 'browser' | 'file'; artifacts: { name: string; path: string; size: number }[]; onTabChange: (t: 'browser' | 'file') => void; onClose: () => void;
 }) {
+  const { sessionId } = useParams<{ sessionId?: string }>();
+  const [files, setFiles] = useState<{ name: string; path: string; size: number }[]>([]);
+
+  // Fetch file list from API on open
+  useEffect(() => {
+    if (!sessionId || tab !== 'file') return;
+    fetch(`/api/v1/files/${sessionId}?user=admin`)
+      .then(r => r.json())
+      .then(data => { if (Array.isArray(data)) setFiles(data); })
+      .catch(() => {});
+  }, [sessionId, tab, artifacts]);
+
+  const downloadUrl = (path: string) => `/api/v1/files/${sessionId}/download?path=${encodeURIComponent(path)}`;
+
+  // Resizable sidebar
+  const [sideWidth, setSideWidth] = useState(420);
+  const dragRef = useRef(false);
+  const MIN_W = 280;
+  const MAX_W = Math.max(MIN_W, window.innerWidth * 0.5);
+  const onMouseDown = useCallback(() => { dragRef.current = true; }, []);
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!dragRef.current) return;
+      const w = window.innerWidth - e.clientX;
+      setSideWidth(Math.max(MIN_W, Math.min(MAX_W, w)));
+    };
+    const onUp = () => { dragRef.current = false; };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+    return () => { window.removeEventListener('mousemove', onMove); window.removeEventListener('mouseup', onUp); };
+  }, [MAX_W]);
+
   return (
-    <div style={{ width: 420, flexShrink: 0, borderLeft: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
+    <div style={{ width: sideWidth, flexShrink: 0, display: 'flex', position: 'relative' }}>
+      {/* Drag handle */}
+      <div
+        onMouseDown={onMouseDown}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLElement).style.width = '5px';
+          (e.currentTarget as HTMLElement).style.background = '#d9d9d9';
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLElement).style.width = '4px';
+          (e.currentTarget as HTMLElement).style.background = 'transparent';
+        }}
+        style={{
+          width: 4, cursor: 'col-resize', flexShrink: 0,
+          background: 'transparent', zIndex: 10, transition: 'width 0.1s, background 0.1s',
+        }}
+      />
+      <div style={{ flex: 1, borderLeft: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid #f0f0f0', flexShrink: 0 }}>
         <div style={{ display: 'flex', gap: 4 }}>
           <Button size="small" type={tab === 'browser' ? 'primary' : 'text'} icon={<GlobalOutlined />} onClick={() => onTabChange('browser')}>浏览器</Button>
@@ -620,14 +671,20 @@ function ArtifactSidebar({ tab, onTabChange, onClose }: {
       {tab === 'file' && (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid #f0f0f0' }}>
-            <span style={{ fontWeight: 500, fontSize: 14 }}>文件预览</span>
-            <Button size="small" icon={<DownloadOutlined />}>下载</Button>
+            <span style={{ fontWeight: 500, fontSize: 14 }}>生成文件 · {files.length}</span>
           </div>
-          <pre style={{ flex: 1, overflow: 'auto', padding: 16, fontSize: 12, background: '#fafafa', fontFamily: 'monospace', whiteSpace: 'pre-wrap' }}>
-            （暂无文件）
-          </pre>
+          <div style={{ flex: 1, overflow: 'auto' }}>
+            {files.length === 0 ? (
+              <div style={{ padding: 32, textAlign: 'center', color: '#00000040', fontSize: 13 }}>暂无生成文件</div>
+            ) : (
+              files.map((f, i) => (
+                <FileRow key={i} name={f.name} path={f.path} size={f.size} downloadUrl={downloadUrl(f.path)} />
+              ))
+            )}
+          </div>
         </div>
       )}
+    </div>
     </div>
   );
 }
@@ -782,6 +839,41 @@ function WeComPanel() {
 
 function FormCard({ children }: { children: React.ReactNode }) {
   return <div style={{ background: '#fff', border: '1px solid #d9d9d9', borderRadius: 8, padding: 20, marginBottom: 16 }}>{children}</div>;
+}
+
+// ─── File row with hover download ──────────────────
+
+function FileRow({ name, path, size, downloadUrl }: { name: string; path: string; size: number; downloadUrl: string }) {
+  const [hover, setHover] = useState(false);
+  return (
+    <a
+      href={downloadUrl}
+      download
+      onMouseEnter={() => setHover(true)}
+      onMouseLeave={() => setHover(false)}
+      style={{
+        display: 'flex', alignItems: 'center', gap: 8,
+        padding: '8px 16px', borderBottom: '1px solid #f0f0f0',
+        fontSize: 12, color: 'inherit', textDecoration: 'none',
+        background: hover ? '#f5f5f5' : undefined,
+      }}
+    >
+      <FileTextOutlined style={{ color: '#1677ff', flexShrink: 0 }} />
+      <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={name}>
+        {name}
+      </span>
+      <span style={{
+        color: '#00000040', flexShrink: 0, fontSize: 11,
+        opacity: hover ? 0 : 1, transition: 'opacity 0.15s',
+      }}>
+        {size > 1024 ? `${(size / 1024).toFixed(1)} KB` : `${size} B`}
+      </span>
+      <DownloadOutlined style={{
+        color: '#1677ff', flexShrink: 0, fontSize: 14,
+        opacity: hover ? 1 : 0, transition: 'opacity 0.15s',
+      }} />
+    </a>
+  );
 }
 
 // ─── Segment Rendering ────────────────────────────

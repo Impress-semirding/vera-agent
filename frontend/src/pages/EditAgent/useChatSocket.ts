@@ -88,6 +88,7 @@ export function useChatSocket(
   const [messages, setMessages] = useState<ChatMsg[]>([]);
   const [status, setStatus] = useState<ChatStatus>('idle');
   const [streaming, setStreaming] = useState(false);
+  const [artifacts, setArtifacts] = useState<{ name: string; path: string; size: number }[]>([]);
 
   const wsRef = useRef<WebSocket | null>(null);
   const pendingRef = useRef<string | null>(null);
@@ -165,6 +166,12 @@ export function useChatSocket(
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'pong' }));
         }
+        return;
+      }
+
+      // ─── Artifacts (workspace files) ───
+      if (t === 'artifacts') {
+        setArtifacts((data?.files ?? []) as { name: string; path: string; size: number }[]);
         return;
       }
 
@@ -489,7 +496,13 @@ export function useChatSocket(
     }
   }, []);
 
-  const clear = useCallback(() => setMessages([]), []);
+  const clear = useCallback(() => {
+    setMessages([]);
+    setArtifacts([]);
+    if (sessionId) {
+      fetch(`/api/v1/sessions/${sessionId}/messages`, { method: 'DELETE' }).catch(() => {});
+    }
+  }, [sessionId]);
 
-  return { messages, status, streaming, send, stop, clear };
+  return { messages, status, streaming, artifacts, send, stop, clear };
 }

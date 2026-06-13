@@ -44,9 +44,11 @@ class ClaudeAgentClient:
         self._process: asyncio.subprocess.Process | None = None
         self._stderr_task: asyncio.Task | None = None
         self.eof: bool = False
+        self.cwd: str = "/tmp"
 
     async def start(self, config: ClaudeAgentConfig) -> None:
         """Spawn claude-runner.py and send initial config."""
+        self.cwd = config.cwd
         runner_script = os.path.join(
             os.path.dirname(os.path.abspath(__file__)),
             "runner.py",

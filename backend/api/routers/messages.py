@@ -18,7 +18,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.api_response import iso, ok
-from api.database import get_db
+from api.database import async_session, get_db
 from api.models import models as M
 from api.schemas import schemas as S
 from api.util import new_id
@@ -56,6 +56,16 @@ async def _get_session(db: AsyncSession, session_id: str) -> M.Session:
     if s is None:
         raise HTTPException(status_code=404, detail=f"session {session_id} not found")
     return s
+
+
+@router.delete("/sessions/{session_id}/messages")
+async def clear_messages(session_id: str, db: AsyncSession = Depends(get_db)):
+    """Delete all messages in a session."""
+    from sqlalchemy import delete as _delete
+    session = await _get_session(db, session_id)
+    await db.execute(_delete(M.Message).where(M.Message.session_id == session.id))
+    await db.commit()
+    return ok({"deleted": True})
 
 
 @router.get("/sessions/{session_id}/messages")
@@ -101,3 +111,57 @@ async def send_message(
     await db.commit()
     await db.refresh(msg)
     return ok(_message_out(msg))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# File download
+# ═══════════════════════════════════════════════════════════════════════
+
+import os as _os
+from fastapi.responses import FileResponse, JSONResponse
+
+@router.get("/files/{session_id}")
+async def list_files(session_id: str, user: str = Query("current-user")):
+    """List generated files in the session workspace output/ directory."""
+    from agent_runtime.claude.config import _WORKSPACE_BASE
+    from sqlalchemy import select
+    from api.models import models as M
+
+    async with async_session() as db:
+        session = (await db.execute(select(M.Session).where(M.Session.id == session_id))).scalar_one_or_none()
+        if session is None:
+            raise HTTPException(status_code=404, detail="会话不存在")
+        cwd = _os.path.join(_WORKSPACE_BASE, session.agent_id, user, session_id, "output")
+    files = []
+    if _os.path.isdir(cwd):
+        for root, dirs, filenames in _os.walk(cwd):
+            for name in filenames:
+                if name.startswith('.'):
+                    continue
+                full = _os.path.join(root, name)
+                try:
+                    size = _os.path.getsize(full)
+                    rel = _os.path.relpath(full, cwd)
+                    files.append({"name": rel, "path": rel, "size": size})
+                except OSError:
+                    pass
+    return files
+
+
+@router.get("/files/{session_id}/download")
+async def download_file(session_id: str, path: str = Query(...), user: str = Query("current-user")):
+    """Download a generated file from the session workspace."""
+    # Reconstruct workspace path (same logic as config.py)
+    from agent_runtime.claude.config import _WORKSPACE_BASE
+    from sqlalchemy import select
+    from api.models import models as M
+
+    async with async_session() as db:
+        session = (await db.execute(select(M.Session).where(M.Session.id == session_id))).scalar_one_or_none()
+        if session is None:
+            raise HTTPException(status_code=404, detail="会话不存在")
+        cwd = _os.path.join(_WORKSPACE_BASE, session.agent_id, user, session_id)
+    fp = _os.path.join(cwd, "output", path)
+    if not _os.path.isfile(fp) or _os.path.commonpath([_os.path.realpath(fp), _os.path.realpath(_os.path.join(cwd, "output"))]) != _os.path.realpath(_os.path.join(cwd, "output")):
+        raise HTTPException(status_code=404, detail="文件不存在")
+    return FileResponse(fp, filename=_os.path.basename(path))

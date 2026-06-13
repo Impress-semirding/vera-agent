@@ -21,7 +21,17 @@ from api.database import async_session
 from api.models import models as M
 from agent_runtime.claude.client import ClaudeAgentConfig
 
-_WORKSPACE_BASE = os.environ.get("AGENT_WORKSPACE_BASE", "/tmp/vera-agent")
+_GLOBAL_CONSTRAINTS = """
+# 工作区约束（系统级别，对所有 agent 生效）
+# - 生成的文件必须写入 output/ 目录，不允许在根目录或其他位置创建非临时文件
+# - 仅在自己的工作区内操作，不允许访问或修改其他用户/会话的目录
+# - 不允许删除或修改 CLAUDE.md、.claude/ 目录下的内容
+"""
+
+_WORKSPACE_BASE = os.environ.get("AGENT_WORKSPACE_BASE", os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "data", "workspaces",
+))
 
 
 async def build_claude_config(
@@ -129,7 +139,10 @@ def _sync_workspace(cwd: str, claude_md: str, skills: list[dict]) -> None:
     """
     import re
     os.makedirs(cwd, exist_ok=True)
-    if claude_md:
+    os.makedirs(os.path.join(cwd, "output"), exist_ok=True)
+    # Append system-level constraints (applies to ALL Claude agents, not per-agent config)
+    claude_md = (claude_md or "") + _GLOBAL_CONSTRAINTS
+    if claude_md.strip():
         _write_file(os.path.join(cwd, "CLAUDE.md"), claude_md)
     for s in skills:
         safe_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', s["name"])

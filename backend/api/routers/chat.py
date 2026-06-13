@@ -363,6 +363,9 @@ async def _process_turn(
             elif event_type == "tool.preparing":
                 _try_push(ws_holder, {**event, "turnId": turn_id})
 
+            elif event_type == "artifacts":
+                _try_push(ws_holder, {**event, "turnId": turn_id})
+
             elif event_type == "error":
                 error_msg = event.get("message", "未知错误")
                 _try_push(ws_holder, {**event, "turnId": turn_id})
@@ -392,6 +395,13 @@ async def _process_turn(
             )
         _try_push(ws_holder, {"type": "error", "message": "LLM 子进程异常退出"})
         return False
+
+    # ── Scan workspace for files generated this turn ──
+    _try_push(ws_holder, {
+        "type": "artifacts",
+        "turnId": turn_id,
+        "files": await _scan_workspace(adapter, turn_id),
+    })
 
     # LLM subprocess completed normally — still alive for reuse
     return True
@@ -536,6 +546,35 @@ async def _persist_message(session_id: str, role: str, content: str, reasoning: 
             await db.commit()
     except Exception as exc:
         print(f"[chat] failed to persist {role} message: {exc}", flush=True)
+
+
+async def _scan_workspace(adapter, turn_id: str) -> list[dict]:
+    """Scan only the output/ subdirectory for user-visible generated files.
+
+    Config files (.claude/, CLAUDE.md) are ignored because they live above output/.
+    """
+    import os as _os
+    client = getattr(adapter, 'client', None)
+    cwd = getattr(client, 'cwd', None) if client else None
+    if not cwd or not _os.path.isdir(cwd):
+        return []
+    output_dir = _os.path.join(cwd, "output")
+    if not _os.path.isdir(output_dir):
+        _os.makedirs(output_dir, exist_ok=True)
+        return []
+    files = []
+    for root, dirs, filenames in _os.walk(output_dir):
+        for name in filenames:
+            if name.startswith('.'):
+                continue
+            full = _os.path.join(root, name)
+            try:
+                size = _os.path.getsize(full)
+                rel = _os.path.relpath(full, output_dir)
+                files.append({"name": rel, "path": rel, "size": size})
+            except OSError:
+                pass
+    return files
 
 
 async def _send_error(ws: WebSocket, message: str) -> None:
