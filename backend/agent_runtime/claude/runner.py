@@ -238,12 +238,36 @@ async def _process_turn(text: str) -> None:
         _write({"type": "model_delta", "channel": "reasoning",
                 "text": f"[CLI] {line.rstrip()}"})
 
+    # Convert our MCP server config to SDK format
+    mcp_servers: dict[str, dict] = {}
+    for srv in _config.mcp_servers:
+        name = srv.get("name", "")
+        if not name:
+            continue
+        transport = srv.get("transport", "stdio")
+        if transport == "stdio":
+            cfg: dict = {"command": srv.get("command", ""), "type": "stdio"}
+            if srv.get("args"):
+                cfg["args"] = srv["args"]
+            if srv.get("env"):
+                cfg["env"] = srv["env"]
+        elif transport == "sse":
+            cfg = {"type": "sse", "url": srv.get("url", "")}
+            if srv.get("headers"):
+                cfg["headers"] = srv["headers"]
+        else:  # streamable-http
+            cfg = {"type": "http", "url": srv.get("url", "")}
+            if srv.get("headers"):
+                cfg["headers"] = srv["headers"]
+        mcp_servers[name] = cfg
+
     options = ClaudeAgentOptions(
         model=_config.model,
         max_turns=_config.max_turns,
         allowed_tools=_config.allowed_tools,
         cwd=_config.cwd or None,
         permission_mode="bypassPermissions",
+        mcp_servers=mcp_servers,
         cli_path=cli_path,
         stderr=_on_cli_stderr,
     )

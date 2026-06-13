@@ -160,6 +160,16 @@ export default function EditAgentPage() {
     handleSessionCreated,
   );
 
+  const handleResetContext = useCallback(() => {
+    if (!sessionId) return;
+    fetch(`/api/v1/sessions/${sessionId}/reset-context?user=admin`, { method: 'POST' })
+      .then(() => {
+        stop();  // kill current Claude client so next msg starts fresh
+        message.success('上下文已重置');
+      })
+      .catch(() => message.error('重置失败'));
+  }, [sessionId, stop]);
+
   const handleSend = () => {
     const text = chatInput;
     if (!text.trim()) return;
@@ -296,6 +306,8 @@ export default function EditAgentPage() {
             artifacts={artifacts}
             onToggleArtifact={() => setArtifactOpen(!artifactOpen)}
             onArtifactTabChange={setArtifactTab}
+            sessionId={sessionId}
+            onResetContext={handleResetContext}
           />
         )}
 
@@ -374,7 +386,7 @@ export default function EditAgentPage() {
 // ═══════════════════════════════════════════════════
 
 // ─── Chat Panel ─────────────────────────────────
-function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, streaming, chatInput, onChatInputChange, onSend, onStop, onClear, artifactOpen, artifactTab, artifacts, onToggleArtifact, onArtifactTabChange }: {
+function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, streaming, chatInput, onChatInputChange, onSend, onStop, onClear, artifactOpen, artifactTab, artifacts, onToggleArtifact, onArtifactTabChange, sessionId, onResetContext }: {
   agentName: string; agentType: string; sessionName: string;
   hasSession: boolean;
   messages: ChatMsg[];
@@ -383,6 +395,7 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
   onClear: () => void; artifactOpen: boolean; artifactTab: 'browser' | 'file';
   artifacts: { name: string; path: string; size: number }[];
   onToggleArtifact: () => void; onArtifactTabChange: (t: 'browser' | 'file') => void;
+  sessionId?: string; onResetContext?: () => void;
 }) {
   const scrollRef = useRef<HTMLDivElement>(null);
   const [isNearBottom, setIsNearBottom] = useState(true);
@@ -513,7 +526,7 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
                   </Button>
                 </div>
               )}
-              <ChatInputArea value={chatInput} onChange={onChatInputChange} onSend={onSend} onStop={onStop} streaming={streaming} />
+              <ChatInputArea value={chatInput} onChange={onChatInputChange} onSend={onSend} onStop={onStop} streaming={streaming} sessionId={sessionId} onResetContext={onResetContext} />
             </div>
             {/* Artifact sidebar */}
             {artifactOpen && <ArtifactSidebar tab={artifactTab} artifacts={artifacts} onTabChange={onArtifactTabChange} onClose={onToggleArtifact} />}
@@ -540,9 +553,9 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
 }
 
 // ─── Chat Input Area ─────────────────────────────
-function ChatInputArea({ value, onChange, onSend, onStop, streaming, large }: {
+function ChatInputArea({ value, onChange, onSend, onStop, streaming, large, sessionId, onResetContext }: {
   value: string; onChange: (v: string) => void; onSend: () => void; onStop: () => void;
-  streaming?: boolean; large?: boolean;
+  streaming?: boolean; large?: boolean; sessionId?: string; onResetContext?: () => void;
 }) {
   // Button logic:
   //   streaming + input empty → show stop button
@@ -565,8 +578,15 @@ function ChatInputArea({ value, onChange, onSend, onStop, streaming, large }: {
             onPressEnter={(e) => { if (!e.shiftKey && canSend) { e.preventDefault(); onSend(); } }}
           />
           <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 16px 10px' }}>
-            <div style={{ display: 'flex', gap: 12, color: '#00000040', fontSize: 14 }}>
+            <div style={{ display: 'flex', gap: 12, color: '#00000040', fontSize: 14, alignItems: 'center' }}>
               <PaperClipOutlined style={{ cursor: 'pointer' }} />
+              {sessionId && onResetContext ? (
+                <Popconfirm title="清空上下文将重置工作区的 CLAUDE.md 和 skills，不删除聊天记录" onConfirm={onResetContext}>
+                  <Button size="small" type="text" style={{ fontSize: 12, color: '#00000073', padding: '0 4px' }}>
+                    🗑 清空上下文
+                  </Button>
+                </Popconfirm>
+              ) : null}
             </div>
             {showStop ? (
               <Button

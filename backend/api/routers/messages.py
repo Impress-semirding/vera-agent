@@ -12,6 +12,7 @@ reply it should POST it back through this endpoint (or write directly).
 from __future__ import annotations
 
 import json
+import os as _os
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
@@ -56,6 +57,27 @@ async def _get_session(db: AsyncSession, session_id: str) -> M.Session:
     if s is None:
         raise HTTPException(status_code=404, detail=f"session {session_id} not found")
     return s
+
+
+@router.post("/sessions/{session_id}/reset-context")
+async def reset_context(session_id: str, user: str = Query("current-user"), db: AsyncSession = Depends(get_db)):
+    """Clear and re-sync the session workspace (CLAUDE.md + skills)."""
+    from agent_runtime.claude.config import _sync_workspace, build_claude_config
+    from sqlalchemy import select
+
+    session = await _get_session(db, session_id)
+    # Load the agent's current config
+    agent_result = await db.execute(select(M.Agent).where(M.Agent.id == session.agent_id))
+    agent = agent_result.scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=404, detail="Agent 不存在")
+    model_config_result = await db.execute(
+        select(M.ModelConfig).where(M.ModelConfig.model_id == agent.model, M.ModelConfig.enabled.is_(True))
+    )
+    model_config = model_config_result.scalar_one_or_none()
+
+    config = await build_claude_config(agent.id, user, session_id, model_config)
+    return ok({"cwd": config.cwd, "reset": True})
 
 
 @router.delete("/sessions/{session_id}/messages")
@@ -117,7 +139,6 @@ async def send_message(
 # File download
 # ═══════════════════════════════════════════════════════════════════════
 
-import os as _os
 from fastapi.responses import FileResponse, JSONResponse
 
 @router.get("/files/{session_id}")
@@ -161,7 +182,12 @@ async def download_file(session_id: str, path: str = Query(...), user: str = Que
         if session is None:
             raise HTTPException(status_code=404, detail="会话不存在")
         cwd = _os.path.join(_WORKSPACE_BASE, session.agent_id, user, session_id)
-    fp = _os.path.join(cwd, "output", path)
-    if not _os.path.isfile(fp) or _os.path.commonpath([_os.path.realpath(fp), _os.path.realpath(_os.path.join(cwd, "output"))]) != _os.path.realpath(_os.path.join(cwd, "output")):
-        raise HTTPException(status_code=404, detail="文件不存在")
-    return FileResponse(fp, filename=_os.path.basename(path))
+    output_dir = _os.path.join(cwd, "output")
+    safe_path = _os.path.normpath(path).lstrip("/\\")
+    fp = _os.path.join(output_dir, safe_path)
+    # Prevent path traversal
+    if not _os.path.realpath(fp).startswith(_os.path.realpath(output_dir) + _os.sep):
+        raise HTTPException(status_code=403, detail="路径非法")
+    if not _os.path.isfile(fp):
+        raise HTTPException(status_code=404, detail=f"文件不存在: {safe_path}")
+    return FileResponse(fp, filename=_os.path.basename(safe_path))

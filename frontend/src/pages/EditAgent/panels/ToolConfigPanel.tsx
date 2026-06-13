@@ -29,6 +29,18 @@ interface CreateFormValues {
   command?: string;
   transport: 'stdio' | 'sse' | 'streamable-http';
   url?: string;
+  args?: string;
+  env?: string;
+  headers?: string;
+}
+
+function _parseJsonField(raw: string | undefined, defaultVal: any): any {
+  if (!raw?.trim()) return defaultVal;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return defaultVal;
+  }
 }
 
 function matchKeyword(query: string, ...fields: (string | undefined)[]): boolean {
@@ -77,6 +89,9 @@ export default function ToolConfigPanel({ agentId }: { agentId: string }) {
       command: values.command?.trim() || undefined,
       transport: values.transport,
       url: values.url?.trim() || undefined,
+      args: _parseJsonField(values.args, []),
+      env: _parseJsonField(values.env, {}),
+      headers: _parseJsonField(values.headers, {}),
     };
     setCreating(true);
     try {
@@ -290,6 +305,15 @@ export default function ToolConfigPanel({ agentId }: { agentId: string }) {
           </Form.Item>
           <Form.Item name="url" label="地址 (url)">
             <Input placeholder="sse / streamable-http 远程地址" />
+          </Form.Item>
+          <Form.Item name="args" label="启动参数 (args, JSON 数组)">
+            <Input.TextArea rows={2} placeholder='["--arg1", "--arg2"]' style={{ fontFamily: 'monospace', fontSize: 12 }} />
+          </Form.Item>
+          <Form.Item name="env" label="环境变量 (env, JSON 对象)">
+            <Input.TextArea rows={2} placeholder='{"KEY1": "val1", "KEY2": "val2"}' style={{ fontFamily: 'monospace', fontSize: 12 }} />
+          </Form.Item>
+          <Form.Item name="headers" label="请求头 (headers, JSON 对象)">
+            <Input.TextArea rows={2} placeholder='{"Authorization": "Bearer xxx", "X-Custom": "val"}' style={{ fontFamily: 'monospace', fontSize: 12 }} />
           </Form.Item>
         </Form>
       </Modal>
