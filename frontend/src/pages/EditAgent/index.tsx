@@ -2,8 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Button, Tag, Input, Switch, Spin,
-  Modal, Popconfirm, Empty,
+  Modal, Popconfirm, Empty, message,
 } from 'antd';
+import ReactMarkdown from 'react-markdown';
+import ReactECharts from 'echarts-for-react';
+import mermaid from 'mermaid';
+
+mermaid.initialize({ startOnLoad: false, theme: 'default' });
 import {
   ArrowLeftOutlined, ArrowDownOutlined, MessageOutlined, SettingOutlined, AppstoreOutlined,
   PlusOutlined, SendOutlined, PaperClipOutlined,
@@ -498,11 +503,11 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
                               </div>
                             ) : null}
                             <div style={{
-                              padding: '10px 16px', borderRadius: 12, fontSize: 14, lineHeight: 1.6,
-                              background: '#f5f5f5', color: '#000000e0', whiteSpace: 'pre-wrap',
+                              padding: '6px 16px', borderRadius: 12, fontSize: 14, lineHeight: 1.6,
+                              background: '#f5f5f5', color: '#000000e0',
                             }}>
-                              {msg.content}
-                              {msg.pending ? '▍' : null}
+                              <ReactMarkdown components={{ code: CodeBlock }}>{msg.content}</ReactMarkdown>
+                              {msg.pending ? <TypingDots /> : null}
                             </div>
                           </>
                         )}
@@ -861,9 +866,26 @@ function FormCard({ children }: { children: React.ReactNode }) {
   return <div style={{ background: '#fff', border: '1px solid #d9d9d9', borderRadius: 8, padding: 20, marginBottom: 16 }}>{children}</div>;
 }
 
+// ─── Typing indicator ──────────────────────────────
+
+function TypingDots() {
+  return (
+    <span style={{ display: 'inline-flex', gap: 3, alignItems: 'center', marginLeft: 4 }}>
+      {[0, 1, 2].map((i) => (
+        <span key={i} style={{
+          width: 6, height: 6, borderRadius: '50%', background: '#00000040',
+          animation: `typingBounce 1.4s ${i * 0.2}s infinite ease-in-out`,
+        }} />
+      ))}
+      <style>{`@keyframes typingBounce { 0%,60%,100% { transform:translateY(0);opacity:0.4 }
+         30% { transform:translateY(-6px);opacity:1 } }`}</style>
+    </span>
+  );
+}
+
 // ─── File row with hover download ──────────────────
 
-function FileRow({ name, path, size, downloadUrl }: { name: string; path: string; size: number; downloadUrl: string }) {
+function FileRow({ name, size, downloadUrl }: { name: string; path: string; size: number; downloadUrl: string }) {
   const [hover, setHover] = useState(false);
   return (
     <a
@@ -931,8 +953,9 @@ function SegmentGroup({ segments, pending }: { segments: Segment[]; pending?: bo
         if (g.type === 'thinking') {
           return <ThinkingBlock key={gi} items={g.items} pending={pending} />;
         }
-        return <TextSegment key={gi} text={g.segment.text} pending={pending} />;
+        return <TextSegment key={gi} text={(g.segment as Extract<Segment, { kind: 'text' }>).text} />;
       })}
+      {pending ? <TypingDots /> : null}
     </>
   );
 }
@@ -1029,7 +1052,7 @@ function ReasoningStep({ text, isLast, pending, source }: { text: string; isLast
           color: '#000000d9', borderTop: `1px solid ${border}`,
         }}>
           {text}
-          {pending && isLast ? '▍' : null}
+null
         </div>
       ) : null}
     </div>
@@ -1096,15 +1119,63 @@ function ToolCard({ segment }: { segment: Extract<Segment, { kind: 'tool' }> }) 
   );
 }
 
-/** Main content text — grey bubble */
+/** Main content text — Markdown with ECharts support */
 function TextSegment({ text, pending }: { text: string; pending?: boolean }) {
   return (
     <div style={{
-      padding: '10px 16px', borderRadius: 12, fontSize: 14, lineHeight: 1.6,
-      background: '#f5f5f5', color: '#000000e0', whiteSpace: 'pre-wrap',
+      padding: '6px 16px', borderRadius: 12, fontSize: 14, lineHeight: 1.6,
+      background: '#f5f5f5', color: '#000000e0',
     }}>
-      {text}
-      {pending ? '▍' : null}
+      <ReactMarkdown components={{ code: CodeBlock }}>{text}</ReactMarkdown>
     </div>
   );
 }
+
+function MermaidBlock({ code }: { code: string }) {
+  const ref = useRef<HTMLDivElement>(null);
+  const id = useRef(`mermaid-${Math.random().toString(36).slice(2)}`).current;
+  useEffect(() => {
+    if (!ref.current) return;
+    mermaid.render(id, code).then(({ svg }) => {
+      if (ref.current) ref.current.innerHTML = svg;
+    }).catch(() => {});
+  }, [code, id]);
+  return <div ref={ref} style={{ margin: '8px 0', display: 'flex', justifyContent: 'center' }} />;
+}
+
+/** Custom code block — ECharts / Mermaid maps to chart, others to styled pre */
+function CodeBlock({ className, children }: any) {
+  const lang = className?.replace('language-', '') || '';
+  const code = String(children).replace(/\n$/, '');
+
+  if (lang === 'echarts') {
+    try {
+      const option = JSON.parse(code);
+      return (
+        <div style={{ margin: '8px 0', border: '1px solid #e8e8e8', borderRadius: 8, overflow: 'hidden' }}>
+          <ReactECharts option={option} style={{ height: 320 }} />
+        </div>
+      );
+    } catch {
+      return <pre style={preStyle}>{code}</pre>;
+    }
+  }
+
+  if (lang === 'mermaid') {
+    return <MermaidBlock code={code} />;
+  }
+
+  return (
+    <pre style={preStyle}>
+      {lang ? <span style={{ color: '#00000040', fontSize: 11 }}>{lang}</span> : null}
+      <code>{code}</code>
+    </pre>
+  );
+}
+
+const preStyle: React.CSSProperties = {
+  margin: '8px 0', padding: '8px 12px', fontSize: 12, lineHeight: 1.5,
+  background: '#fafafa', borderRadius: 6, overflow: 'auto',
+  fontFamily: "'SFMono-Regular', Consolas, monospace",
+  whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+};

@@ -54,7 +54,7 @@ function upsertSegment(
 
   // Text: find the last text segment, reuse if it's the last segment overall
   for (let i = next.length - 1; i >= 0; i--) {
-    if (next[i].kind === kind) {
+    if (next[i]?.kind === kind) {
       if (i === next.length - 1) return { segments: next, index: i };
       break;
     }
@@ -189,12 +189,13 @@ export function useChatSocket(
           let idx = findMsgIdx(next, tid);
           if (idx === -1) return prev;
           const target = next[idx];
+          if (!target) return prev;
 
           // Update flat fields for backward compat
           if (channel === 'reasoning') {
-            next[idx] = { ...target, reasoning: (target.reasoning || '') + text };
+            next[idx] = { ...target, reasoning: (target.reasoning || '') + text } as ChatMsg;
           } else if (channel === 'content') {
-            next[idx] = { ...target, content: (target.content || '') + text };
+            next[idx] = { ...target, content: (target.content || '') + text } as ChatMsg;
           }
 
           // Update segments
@@ -202,16 +203,19 @@ export function useChatSocket(
             const segs = [...target.segments];
             if (channel === 'tool_args') {
               // Append to the last incomplete tool segment's args
-              let ti = segs.findLastIndex((s) => s.kind === 'tool' && !s.done);
+              let ti = -1;
+              for (let k = segs.length - 1; k >= 0; k--) {
+                const el = segs[k];
+                if (el && el.kind === 'tool' && !(el as Extract<Segment, { kind: 'tool' }>).done) { ti = k; break; }
+              }
               if (ti === -1) {
-                // No incomplete tool segment — create one
                 segs.push({ kind: 'tool', callId: '', name: '', args: '', done: false });
                 ti = segs.length - 1;
               }
               const seg = { ...segs[ti] } as Extract<Segment, { kind: 'tool' }>;
               seg.args = seg.args + text;
               segs[ti] = seg;
-              next[idx] = { ...next[idx], segments: segs };
+              next[idx] = { ...next[idx], segments: segs } as ChatMsg;
             } else {
               // Both reasoning and content deltas go into the thinking block.
               // Only model_final creates the final visible text segment.
@@ -223,7 +227,7 @@ export function useChatSocket(
                 (seg as Extract<Segment, { kind: 'reasoning' }>).source = channel === 'content' ? 'content' : 'reasoning';
               }
               updated[si] = seg;
-              next[idx] = { ...next[idx], segments: updated };
+              next[idx] = { ...next[idx], segments: updated } as ChatMsg;
             }
           }
           return next;
@@ -241,10 +245,10 @@ export function useChatSocket(
           const idx = findMsgIdx(next, tid);
           if (idx === -1) return prev;
           const target = next[idx];
-          if (target.segments == null) return prev;
+          if (!target || target.segments == null) return prev;
           const segs = [...target.segments];
           segs.push({ kind: 'tool', callId, name, args: '', done: false });
-          next[idx] = { ...target, segments: segs };
+          next[idx] = { ...target, segments: segs } as ChatMsg;
           return next;
         });
         return;
@@ -261,11 +265,11 @@ export function useChatSocket(
           const idx = findMsgIdx(next, tid);
           if (idx === -1) return prev;
           const target = next[idx];
-          if (target.segments == null) return prev;
+          if (!target || target.segments == null) return prev;
           const segs = target.segments.map((s) =>
             s.kind === 'tool' && s.callId === callId ? { ...s, name, args } : s,
           );
-          next[idx] = { ...target, segments: segs };
+          next[idx] = { ...target, segments: segs } as ChatMsg;
           return next;
         });
         return;
@@ -282,11 +286,11 @@ export function useChatSocket(
           const idx = findMsgIdx(next, tid);
           if (idx === -1) return prev;
           const target = next[idx];
-          if (target.segments == null) return prev;
+          if (!target || target.segments == null) return prev;
           const segs = target.segments.map((s) =>
             s.kind === 'tool' && s.callId === callId ? { ...s, ok, output, done: true } : s,
           );
-          next[idx] = { ...target, segments: segs };
+          next[idx] = { ...target, segments: segs } as ChatMsg;
           return next;
         });
         return;

@@ -37,10 +37,31 @@ from claude_agent_sdk import query, ClaudeAgentOptions
 # Helpers
 # ═══════════════════════════════════════════════════════════════════════
 
+_MAX_LINE = 60000  # well below OS pipe buffer (~64KB)
+
 def _write(obj: dict) -> None:
-    """Write one JSON line to stdout (flush immediately)."""
-    sys.stdout.write(json.dumps(obj, ensure_ascii=False) + "\n")
+    """Write one JSON line to stdout (flush immediately).
+
+    Any string value > _MAX_LINE is truncated to prevent stdout pipe deadlock.
+    """
+    line = json.dumps(obj, ensure_ascii=False)
+    t = obj.get("type", "?")
+    if len(line) > _MAX_LINE:
+        sizes = {k: len(str(v)) for k, v in obj.items() if isinstance(v, str)}
+        sys.stderr.write(f"[WRITE] TRUNCATE type={t} line={len(line)} fields={sizes}\n")
+        sys.stderr.flush()
+        # Truncate the largest string field to fit
+        for key in ("output", "content", "reasoningContent", "args", "text"):
+            if key in obj and isinstance(obj[key], str) and len(obj[key]) > 1000:
+                excess = len(line) - _MAX_LINE + 200
+                obj = {**obj, key: obj[key][:max(1000, len(obj[key]) - excess)] + f"\n...(截断)"}
+        line = json.dumps(obj, ensure_ascii=False)
+    sys.stdout.write(line + "\n")
     sys.stdout.flush()
+    # Diagnostic: log every 50th write to stderr + the ones before potential hangs
+    if t not in ("ping", "pong", "model_delta"):
+        sys.stderr.write(f"[WRITE] type={t} line={len(line)}c\n")
+        sys.stderr.flush()
 
 
 def _find_working_cli() -> str | None:
@@ -62,6 +83,9 @@ def _find_working_cli() -> str | None:
 
 def _write_delta(channel: str, text: str) -> None:
     _write({"type": "model_delta", "channel": channel, "text": text})
+
+
+_MAX_OUTPUT_LEN = 8000
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -148,8 +172,10 @@ async def _handle_sdk_message(msg) -> None:
                         c.get("text", "") if isinstance(c, dict) else str(c) for c in output
                     )
                 is_error = getattr(block, "is_error", False)
-                _write({"type": "tool.result", "callId": call_id,
-                        "ok": not is_error, "output": str(output or "")})
+                out_str = str(output or "")
+                if len(out_str) > _MAX_OUTPUT_LEN:
+                    out_str = out_str[:_MAX_OUTPUT_LEN] + f"\n... (截断, 共{len(out_str)}字符)"
+                _write({"type": "tool.result", "callId": call_id, "ok": not is_error, "output": out_str})
             elif block_type == "TextBlock":
                 # Skill output / context injection — show as reasoning
                 _write_delta("reasoning", block.text)
@@ -161,6 +187,10 @@ async def _handle_sdk_message(msg) -> None:
         content = result if isinstance(result, str) else str(result)
         _write({"type": "model_final", "content": content, "reasoningContent": ""})
         return
+
+    # ── Catch-all for unhandled types (diagnostic) ──
+    _write({"type": "model_delta", "channel": "reasoning",
+            "text": f"[UNHANDLED] {msg_type}: {str(msg)[:200]}"})
 
 
 def _dispatch_stream_event(event: dict) -> None:
@@ -216,7 +246,10 @@ def _dispatch_content_block(block) -> None:
         if isinstance(output, list):
             output = "\n".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in output)
         is_error = getattr(block, "is_error", False)
-        _write({"type": "tool.result", "callId": call_id, "ok": not is_error, "output": str(output or "")})
+        out_str = str(output or "")
+        if len(out_str) > _MAX_OUTPUT_LEN:
+            out_str = out_str[:_MAX_OUTPUT_LEN] + f"\n... (截断, 共{len(out_str)}字符)"
+        _write({"type": "tool.result", "callId": call_id, "ok": not is_error, "output": out_str})
 
 
 # ═══════════════════════════════════════════════════════════════════════

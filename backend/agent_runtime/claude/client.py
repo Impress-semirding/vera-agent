@@ -30,7 +30,7 @@ class ClaudeAgentConfig:
     skills: list[dict] = field(default_factory=list)
     mcp_servers: list[dict] = field(default_factory=list)
     allowed_tools: list[str] = field(default_factory=list)
-    max_turns: int = 50
+    max_turns: int = 200
 
 
 class ClaudeAgentClient:

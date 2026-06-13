@@ -13,8 +13,12 @@
     "antd": "^5.24.0",
     "axios": "^1.9.0",
     "axios-mock-adapter": "^2.1.0",
+    "echarts": "^6.1.0",
+    "echarts-for-react": "^3.0.6",
+    "mermaid": "^11.15.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
     "react-router-dom": "^6.28.0",
     "zustand": "^5.0.0"
   },
