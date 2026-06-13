@@ -6,7 +6,7 @@ import { getUserName } from '@/services/authUser';
 // ─── Segment model ─────────────────────────────────
 
 export type Segment =
-  | { kind: 'reasoning'; text: string }
+  | { kind: 'reasoning'; text: string; source?: 'reasoning' | 'content' }
   | { kind: 'text'; text: string }
   | { kind: 'tool'; callId: string; name: string; args: string; output?: string; ok?: boolean; done: boolean };
 
@@ -44,17 +44,24 @@ function upsertSegment(
     return { segments: next, index: next.length - 1 };
   }
 
-  // For reasoning / text: find the LAST segment of this kind (only if it's the last segment overall)
+  // Reasoning: always create a NEW segment (each thinking step is separate).
+  // Text: append to the last text segment (final answer is one continuous block).
+  if (kind === 'reasoning') {
+    const seg: Segment = { kind: 'reasoning', text: '' };
+    next.push(seg);
+    return { segments: next, index: next.length - 1 };
+  }
+
+  // Text: find the last text segment, reuse if it's the last segment overall
   for (let i = next.length - 1; i >= 0; i--) {
     if (next[i].kind === kind) {
-      // Only reuse if it's the last segment (don't go back and modify earlier ones)
       if (i === next.length - 1) return { segments: next, index: i };
       break;
     }
   }
 
   // Create new segment
-  const seg: Segment = kind === 'reasoning' ? { kind: 'reasoning', text: '' } : { kind: 'text', text: '' };
+  const seg: Segment = { kind: 'text', text: '' };
   next.push(seg);
   return { segments: next, index: next.length - 1 };
 }
@@ -199,10 +206,15 @@ export function useChatSocket(
               segs[ti] = seg;
               next[idx] = { ...next[idx], segments: segs };
             } else {
-              const kind = channel === 'reasoning' ? 'reasoning' : 'text';
+              // Both reasoning and content deltas go into the thinking block.
+              // Only model_final creates the final visible text segment.
+              const kind = channel === 'reasoning' || channel === 'content' ? 'reasoning' : 'text';
               const { segments: updated, index: si } = upsertSegment(segs, kind);
               const seg = { ...updated[si] } as Extract<Segment, { kind: 'reasoning' | 'text' }>;
               seg.text = seg.text + text;
+              if (kind === 'reasoning') {
+                (seg as Extract<Segment, { kind: 'reasoning' }>).source = channel === 'content' ? 'content' : 'reasoning';
+              }
               updated[si] = seg;
               next[idx] = { ...next[idx], segments: updated };
             }
@@ -282,12 +294,19 @@ export function useChatSocket(
           if (idx === -1) return prev;
           const target = next[idx];
           if (target && target.role === 'assistant') {
+            const finalContent = (typeof data.content === 'string' && data.content) ? data.content : target.content;
             next[idx] = {
               ...target,
-              content: typeof data.content === 'string' ? data.content : target.content,
-              reasoning: typeof data.reasoningContent === 'string' ? data.reasoningContent : target.reasoning,
+              content: finalContent,
+              reasoning: (typeof data.reasoningContent === 'string' && data.reasoningContent) ? data.reasoningContent : target.reasoning,
               pending: false,
             };
+            // Append final text segment after thinking block (always visible)
+            if (finalContent && target.segments != null) {
+              const segs = [...target.segments];
+              segs.push({ kind: 'text', text: finalContent });
+              next[idx].segments = segs;
+            }
           }
           return next;
         });
@@ -311,13 +330,20 @@ export function useChatSocket(
       .then((res) => {
         if (cancelled) return;
         setMessages(
-          (res.data ?? []).map((m) => ({
-            id: m.id,
-            role: m.role === 'assistant' ? 'assistant' : 'user',
-            content: m.content || '',
-            reasoning: m.reasoningContent || undefined,
-            timestamp: m.timestamp,
-          })),
+          (res.data ?? []).map((m) => {
+            const msg: ChatMsg = {
+              id: m.id,
+              role: m.role === 'assistant' ? 'assistant' : 'user',
+              content: m.content || '',
+              reasoning: m.reasoningContent || undefined,
+              timestamp: m.timestamp,
+            };
+            // Use persisted segments if available
+            if (m.role === 'assistant' && m.segments && m.segments.length > 0) {
+              msg.segments = m.segments as Segment[];
+            }
+            return msg;
+          }),
         );
       })
       .catch(() => {});

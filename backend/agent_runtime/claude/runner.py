@@ -96,7 +96,12 @@ _config: RunnerConfig | None = None
 # ═══════════════════════════════════════════════════════════════════════
 
 async def _handle_sdk_message(msg) -> None:
-    """Translate one SDK message into our stdout protocol events."""
+    """Translate one SDK message into our stdout protocol events.
+
+    StreamEvent delivers real-time Anthropic API deltas — these are the
+    primary source for streaming.  AssistantMessage is the fallback for
+    fully-assembled blocks when the CLI doesn't emit StreamEvents.
+    """
     global _session_id
 
     msg_type = type(msg).__name__
@@ -109,55 +114,109 @@ async def _handle_sdk_message(msg) -> None:
                 _session_id = data.get("session_id", _session_id)
         return
 
-    # ── AssistantMessage — iterate over ContentBlocks ──
+    # ── StreamEvent — real-time Anthropic SSE deltas ──
+    if msg_type == "StreamEvent":
+        event = getattr(msg, "event", None)
+        if not isinstance(event, dict):
+            _write({"type": "model_delta", "channel": "reasoning",
+                    "text": "[StreamEvent] event type=" + type(event).__name__ + " " + str(event)[:200]})
+            return
+        _dispatch_stream_event(event)
+        return
+
+    # ── AssistantMessage — assembled blocks (fallback) ──
     if msg_type == "AssistantMessage":
         blocks = getattr(msg, "content", None)
         if not isinstance(blocks, list):
             return
         for block in blocks:
-            block_type = type(block).__name__
-            if block_type == "TextBlock":
-                _write_delta("content", block.text)
-            elif block_type == "ThinkingBlock":
-                _write_delta("reasoning", block.thinking)
-            elif block_type == "ToolUseBlock":
-                # Emit tool.preparing + tool.intent
-                call_id = getattr(block, "id", "")
-                name = getattr(block, "name", "")
-                args_str = json.dumps(block.input, ensure_ascii=False) if block.input else ""
-                _write({"type": "tool.preparing", "callId": call_id, "name": name})
-                # Stream args
-                for i in range(0, len(args_str), 12):
-                    _write_delta("tool_args", args_str[i:i + 12])
-                _write({"type": "tool.intent", "callId": call_id, "name": name, "args": args_str})
-            elif block_type == "ToolResultBlock":
-                # Tool result from the model's perspective (usually paired with a tool_use)
-                call_id = getattr(block, "tool_use_id", "")
-                content = getattr(block, "content", "")
-                if isinstance(content, list):
-                    content = "\n".join(
-                        c.get("text", "") if isinstance(c, dict) else str(c) for c in content
-                    )
-                is_error = getattr(block, "is_error", False)
-                _write({"type": "tool.result", "callId": call_id, "ok": not is_error, "output": str(content or "")})
-            elif block_type in ("ServerToolUseBlock", "ServerToolResultBlock"):
-                # Server-side tools — log and skip for now
-                pass
+            _dispatch_content_block(block)
         return
 
-    # ── ResultMessage — final assembled response ──
+    # ── UserMessage — tool results / skill output ──
+    if msg_type == "UserMessage":
+        blocks = getattr(msg, "content", None)
+        if not isinstance(blocks, list):
+            return
+        for block in blocks:
+            block_type = type(block).__name__
+            if block_type == "ToolResultBlock":
+                call_id = getattr(block, "tool_use_id", "")
+                output = getattr(block, "content", "")
+                if isinstance(output, list):
+                    output = "\n".join(
+                        c.get("text", "") if isinstance(c, dict) else str(c) for c in output
+                    )
+                is_error = getattr(block, "is_error", False)
+                _write({"type": "tool.result", "callId": call_id,
+                        "ok": not is_error, "output": str(output or "")})
+            elif block_type == "TextBlock":
+                # Skill output / context injection — show as reasoning
+                _write_delta("reasoning", block.text)
+        return
+
+    # ── ResultMessage — turn complete ──
     if msg_type == "ResultMessage":
-        result = getattr(msg, "result", "")
-        content = ""
-        if isinstance(result, str):
-            content = result
-        elif isinstance(result, dict):
-            content = result.get("content", "")
+        result = getattr(msg, "result", "") or ""
+        content = result if isinstance(result, str) else str(result)
         _write({"type": "model_final", "content": content, "reasoningContent": ""})
         return
 
-    # ── Others (StatusMessage, ErrorMessage, etc.) — ignore ──
-    return
+
+def _dispatch_stream_event(event: dict) -> None:
+    """Route a raw Anthropic SSE event to the correct protocol action."""
+    event_type = event.get("type", "")
+    delta = event.get("delta", {})
+    content_block = event.get("content_block", {})
+
+    if event_type == "content_block_start":
+        cb_type = content_block.get("type", "")
+        if cb_type == "tool_use":
+            _write({"type": "tool.preparing",
+                    "callId": content_block.get("id", ""),
+                    "name": content_block.get("name", "")})
+
+    elif event_type == "content_block_delta":
+        delta_type = delta.get("type", "")
+        if delta_type == "text_delta":
+            text = delta.get("text", "")
+            if text:
+                _write_delta("content", text)
+        elif delta_type == "thinking_delta":
+            text = delta.get("thinking", "")
+            if text:
+                _write_delta("reasoning", text)
+        elif delta_type == "input_json_delta":
+            text = delta.get("partial_json", "")
+            if text:
+                _write_delta("tool_args", text)
+
+    elif event_type == "content_block_stop":
+        pass
+
+
+def _dispatch_content_block(block) -> None:
+    """Route an assembled ContentBlock (AssistantMessage fallback)."""
+    block_type = type(block).__name__
+
+    if block_type == "TextBlock":
+        _write_delta("content", block.text)
+    elif block_type == "ThinkingBlock":
+        _write_delta("reasoning", block.thinking)
+    elif block_type == "ToolUseBlock":
+        call_id = getattr(block, "id", "")
+        name = getattr(block, "name", "")
+        args_str = json.dumps(block.input, ensure_ascii=False) if block.input else ""
+        # Emit preparing + intent together (args are already complete)
+        _write({"type": "tool.preparing", "callId": call_id, "name": name})
+        _write({"type": "tool.intent", "callId": call_id, "name": name, "args": args_str})
+    elif block_type == "ToolResultBlock":
+        call_id = getattr(block, "tool_use_id", "")
+        output = getattr(block, "content", "")
+        if isinstance(output, list):
+            output = "\n".join(c.get("text", "") if isinstance(c, dict) else str(c) for c in output)
+        is_error = getattr(block, "is_error", False)
+        _write({"type": "tool.result", "callId": call_id, "ok": not is_error, "output": str(output or "")})
 
 
 # ═══════════════════════════════════════════════════════════════════════

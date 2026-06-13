@@ -453,7 +453,10 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
                   const hasSegments = !isUser && msg.segments && msg.segments.length > 0;
                   return (
                     <div key={msg.id} style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start', marginBottom: 16 }}>
-                      <div style={{ maxWidth: '70%', display: 'flex', flexDirection: 'column', gap: hasSegments ? 8 : 2 }}>
+                      <div style={isUser
+                        ? { maxWidth: '70%', display: 'flex', flexDirection: 'column', gap: 2 }
+                        : { width: '70%', minWidth: 320, display: 'flex', flexDirection: 'column', gap: hasSegments ? 8 : 2, flexShrink: 0 }
+                      }>
                         {timeLabel ? (
                           <div style={{ fontSize: 13, color: '#00000073', textAlign: isUser ? 'right' : 'left', padding: '0 4px' }} title={timeTitle}>
                             {timeLabel}
@@ -822,22 +825,18 @@ function SegmentGroup({ segments, pending }: { segments: Segment[]; pending?: bo
   );
 }
 
-/** Unified collapsible thinking block — contains reasoning text + tool calls */
+/** Unified collapsible thinking block — renders segments in original order */
 function ThinkingBlock({ items, pending }: { items: Segment[]; pending?: boolean }) {
   const [collapsed, setCollapsed] = useState(false);
-  const reasoningParts = items.filter((s) => s.kind === 'reasoning');
   const toolParts = items.filter((s) => s.kind === 'tool');
-  const reasoningText = reasoningParts.map((s) => s.text).join('');
-  const hasContent = reasoningText.length > 0 || toolParts.length > 0;
-  // Auto-collapse when thinking is done and user hasn't manually toggled
-  const canCollapse = !pending && hasContent;
+  const hasContent = items.length > 0;
 
   return (
     <div style={{
+      width: '100%',
       fontSize: 12, color: '#6b5ce7', background: '#f8f6ff',
       border: '1px solid #e8e0ff', borderRadius: 8, overflow: 'hidden',
     }}>
-      {/* Header */}
       <div
         onClick={() => setCollapsed(!collapsed)}
         style={{
@@ -849,91 +848,137 @@ function ThinkingBlock({ items, pending }: { items: Segment[]; pending?: boolean
         思考过程
         {pending && !hasContent ? <LoadingOutlined style={{ fontSize: 10 }} /> : null}
         {toolParts.length > 0 ? (
-          <span style={{ fontSize: 11, color: '#6b5ce780', fontWeight: 400 }}>
-            · {toolParts.length} 次工具调用
-          </span>
+          <span style={{ fontSize: 11, color: '#6b5ce780', fontWeight: 400 }}>· {toolParts.length} 次工具调用</span>
         ) : null}
         {hasContent ? (
-          <span style={{ marginLeft: 'auto', fontSize: 10, color: '#6b5ce780' }}>
-            {collapsed ? '展开' : '收起'}
-          </span>
+          <span style={{ marginLeft: 'auto', fontSize: 10, color: '#6b5ce780' }}>{collapsed ? '展开' : '收起'}</span>
         ) : null}
       </div>
 
-      {/* Collapsible body */}
       {!collapsed ? (
-        <div style={{ borderTop: hasContent || pending ? '1px solid #e8e0ff' : 'none' }}>
-          {/* Reasoning text */}
-          {reasoningText ? (
-            <div style={{ padding: '8px 12px', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
-              {reasoningText}
-              {pending && reasoningParts.length > 0 ? '▍' : null}
-            </div>
-          ) : pending && toolParts.length === 0 ? (
+        <div style={{ padding: '4px 0 8px' }}>
+          {items.length === 0 && pending ? (
             <div style={{ padding: '8px 12px' }}>思考中…</div>
           ) : null}
-
-          {/* Tool calls */}
-          {toolParts.length > 0 ? (
-            <div style={{ padding: '0 8px 8px', display: 'flex', flexDirection: 'column', gap: 6 }}>
-              {toolParts.map((seg, ti) => (
-                <ToolCard key={ti} segment={seg as Extract<Segment, { kind: 'tool' }>} />
-              ))}
-            </div>
-          ) : null}
+          {items.map((seg, i) => {
+            if (seg.kind === 'reasoning') {
+              return <ReasoningStep key={i} text={seg.text} isLast={i === items.length - 1} pending={pending} source={seg.source} />;
+            }
+            if (seg.kind === 'tool') {
+              return (
+                <div key={i} style={{ margin: '6px 8px' }}>
+                  <ToolCard segment={seg as Extract<Segment, { kind: 'tool' }>} />
+                </div>
+              );
+            }
+            return null;
+          })}
         </div>
       ) : null}
     </div>
   );
 }
 
-/** Tool call card — compact card showing name, args, and result */
+/** Single thinking step — individually collapsible, bordered card */
+function ReasoningStep({ text, isLast, pending, source }: { text: string; isLast: boolean; pending?: boolean; source?: 'reasoning' | 'content' }) {
+  const [collapsed, setCollapsed] = useState(true);
+  if (!text && !pending) return null;
+  const isThinking = source === 'reasoning' || !source;
+  const label = isThinking ? '🧠 推理' : '📝 回复草稿';
+  const bg = isThinking ? '#f8f6ff' : '#fffbe6';
+  const border = isThinking ? '#d9d9ff' : '#ffe58f';
+  const topBg = isThinking ? '#f8f6ff' : '#fffbe6';
+  const color = isThinking ? '#6b5ce7' : '#ad8b00';
+  return (
+    <div style={{
+      margin: '6px 8px',
+      width: 'calc(100% - 16px)',
+      background: bg,
+      border: `1px solid ${border}`,
+      borderRadius: 6,
+      overflow: 'hidden',
+    }}>
+      <div onClick={() => text && setCollapsed(!collapsed)} style={{
+        padding: '6px 10px', display: 'flex', alignItems: 'center', gap: 6,
+        cursor: text ? 'pointer' : 'default', userSelect: 'none',
+        background: topBg, color, fontSize: 12, fontWeight: 500,
+      }}>
+        <span>{label}</span>
+        {!text && pending ? <LoadingOutlined style={{ fontSize: 10 }} /> : null}
+        {text ? (
+          <span style={{ marginLeft: 'auto', fontSize: 10, fontWeight: 400, opacity: 0.5 }}>
+            {collapsed ? '展开' : '收起'}
+          </span>
+        ) : null}
+      </div>
+      {!collapsed && text ? (
+        <div style={{
+          padding: '8px 10px', whiteSpace: 'pre-wrap', lineHeight: 1.6,
+          color: '#000000d9', borderTop: `1px solid ${border}`,
+        }}>
+          {text}
+          {pending && isLast ? '▍' : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Tool call card — collapsible args and result */
 function ToolCard({ segment }: { segment: Extract<Segment, { kind: 'tool' }> }) {
   const { name, args, output, ok, done } = segment;
+  const [collapsed, setCollapsed] = useState(true);
   const headerIcon = done
     ? (ok ? <CheckCircleOutlined style={{ color: '#52c41a' }} /> : <CloseCircleOutlined style={{ color: '#ff4d4f' }} />)
     : <LoadingOutlined style={{ color: '#1677ff' }} />;
 
+  const hasBody = !!(args || output);
   return (
-    <div style={{ background: '#fff', border: '1px solid #e8e8e8', borderRadius: 6, fontSize: 12, overflow: 'hidden' }}>
-      {/* Header */}
-      <div style={{
+    <div style={{ width: '100%', background: '#fff', border: '1px solid #e8e8e8', borderRadius: 6, fontSize: 12, overflow: 'hidden' }}>
+      <div onClick={() => hasBody && setCollapsed(!collapsed)} style={{
         display: 'flex', alignItems: 'center', gap: 6,
         padding: '6px 10px', background: '#fafafa',
-        borderBottom: args || output ? '1px solid #f0f0f0' : 'none',
+        cursor: hasBody ? 'pointer' : 'default', userSelect: 'none',
+        borderBottom: !collapsed && hasBody ? '1px solid #f0f0f0' : 'none',
       }}>
         {headerIcon}
         <code style={{ fontWeight: 600, fontSize: 12, color: '#000000d9' }}>{name || 'tool'}</code>
         {!done && <span style={{ color: '#1677ff', fontSize: 11 }}>执行中…</span>}
         {done && ok && <span style={{ color: '#52c41a', fontSize: 11 }}>完成</span>}
         {done && !ok && <span style={{ color: '#ff4d4f', fontSize: 11 }}>失败</span>}
+        {hasBody ? (
+          <span style={{ marginLeft: 'auto', fontSize: 10, color: '#00000040' }}>
+            {collapsed ? '展开' : '收起'}
+          </span>
+        ) : null}
       </div>
 
-      {/* Args */}
-      {args ? (
-        <pre style={{
-          margin: 0, padding: '6px 10px', fontSize: 11, lineHeight: 1.5,
-          background: '#f5f5f5', color: '#000000a6',
-          whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-          fontFamily: "'SFMono-Regular', Consolas, monospace",
-          borderBottom: output ? '1px solid #f0f0f0' : 'none',
-        }}>
-          {args}
-        </pre>
-      ) : null}
-
-      {/* Output */}
-      {output ? (
-        <pre style={{
-          margin: 0, padding: '6px 10px', fontSize: 11, lineHeight: 1.5,
-          background: done && !ok ? '#fff2f0' : '#f5f5f5',
-          color: done && !ok ? '#cf1322' : '#000000a6',
-          whiteSpace: 'pre-wrap', wordBreak: 'break-all',
-          fontFamily: "'SFMono-Regular', Consolas, monospace",
-          maxHeight: 200, overflowY: 'auto',
-        }}>
-          {output}
-        </pre>
+      {!collapsed ? (
+        <>
+          {args ? (
+            <pre style={{
+              margin: 0, padding: '6px 10px', fontSize: 11, lineHeight: 1.5,
+              background: '#f5f5f5', color: '#000000a6',
+              whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+              fontFamily: "'SFMono-Regular', Consolas, monospace",
+              borderBottom: output ? '1px solid #f0f0f0' : 'none',
+            }}>
+              {args}
+            </pre>
+          ) : null}
+          {output ? (
+            <pre style={{
+              margin: 0, padding: '6px 10px', fontSize: 11, lineHeight: 1.5,
+              background: done && !ok ? '#fff2f0' : '#f5f5f5',
+              color: done && !ok ? '#cf1322' : '#000000a6',
+              whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+              fontFamily: "'SFMono-Regular', Consolas, monospace",
+              maxHeight: 200, overflowY: 'auto',
+            }}>
+              {output}
+            </pre>
+          ) : null}
+        </>
       ) : null}
     </div>
   );

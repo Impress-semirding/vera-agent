@@ -11,6 +11,8 @@ reply it should POST it back through this endpoint (or write directly).
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -25,12 +27,25 @@ router = APIRouter(tags=["messages"])
 
 
 def _message_out(m: M.Message) -> dict:
+    segments = None
+    if m.tool_calls:
+        try:
+            data = json.loads(m.tool_calls)
+            if isinstance(data, list) and len(data) > 0 and isinstance(data[0], dict):
+                # Check if it's a segment list (has 'kind' field) or tool_calls list
+                if "kind" in data[0]:
+                    segments = data
+                else:
+                    segments = None  # old format: tool_calls, not segments
+        except (json.JSONDecodeError, TypeError):
+            pass
     return {
         "id": m.id,
         "sessionId": m.session_id,
         "role": m.role,
         "content": m.content,
         "reasoningContent": m.reasoning_content,
+        "segments": segments,
         "timestamp": iso(m.created_at),
         "artifacts": None,
     }

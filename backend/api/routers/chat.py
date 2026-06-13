@@ -30,6 +30,7 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+import json
 from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
@@ -290,10 +291,15 @@ async def _process_turn(
     if not skip_mock:
         await _emit_mock_tool_events(ws_holder, turn_id)
 
-    # Read streaming response
+    # Build segment list as events flow through — matches frontend model
+    segments: list[dict] = []
     content_parts: list[str] = []
     reasoning_parts: list[str] = []
+    tool_calls: list[dict] = []
     error_msg: str | None = None
+
+    def _push_seg(seg: dict) -> None:
+        segments.append(seg)
 
     try:
         async for event in adapter.read_deltas():
@@ -306,15 +312,56 @@ async def _process_turn(
                     content_parts.append(delta_text)
                 else:
                     reasoning_parts.append(delta_text)
+                # Track in segments
+                if channel != "tool_args":
+                    source = "content" if channel == "content" else "reasoning"
+                    # Append to last reasoning segment if compatible, else create new
+                    if segments and segments[-1].get("kind") == "reasoning" and segments[-1].get("source") == source:
+                        segments[-1]["text"] = segments[-1]["text"] + delta_text
+                    else:
+                        _push_seg({"kind": "reasoning", "text": delta_text, "source": source})
                 _try_push(ws_holder, {**event, "turnId": turn_id})
 
             elif event_type == "model_final":
+                final_content = event.get("content", "")
+                final_reasoning = event.get("reasoningContent", "")
+                if final_content:
+                    _push_seg({"kind": "text", "text": final_content})
                 _try_push(ws_holder, {**event, "turnId": turn_id})
                 await _persist_message(
                     session_id, "assistant",
-                    event.get("content", ""),
-                    event.get("reasoningContent", ""),
+                    final_content or "".join(content_parts),
+                    final_reasoning or "".join(reasoning_parts),
+                    tool_calls=tool_calls if tool_calls else None,
+                    segments=segments if segments else None,
                 )
+
+            elif event_type == "tool.intent":
+                tc = {
+                    "callId": event.get("callId", ""),
+                    "name": event.get("name", ""),
+                    "args": event.get("args", ""),
+                    "status": "running",
+                }
+                tool_calls.append(tc)
+                _push_seg({"kind": "tool", "callId": tc["callId"], "name": tc["name"],
+                           "args": tc["args"], "done": False})
+                _try_push(ws_holder, {**event, "turnId": turn_id})
+
+            elif event_type == "tool.result":
+                cid = event.get("callId", "")
+                ok = event.get("ok", False)
+                output = event.get("output", "")
+                for tc in tool_calls:
+                    if tc.get("callId") == cid:
+                        tc["ok"] = ok; tc["output"] = output; tc["status"] = "done"; break
+                for seg in segments:
+                    if seg.get("kind") == "tool" and seg.get("callId") == cid:
+                        seg["ok"] = ok; seg["output"] = output; seg["done"] = True; break
+                _try_push(ws_holder, {**event, "turnId": turn_id})
+
+            elif event_type == "tool.preparing":
+                _try_push(ws_holder, {**event, "turnId": turn_id})
 
             elif event_type == "error":
                 error_msg = event.get("message", "未知错误")
@@ -473,7 +520,7 @@ async def _safe_send(ws: WebSocket, data: dict) -> None:
         pass
 
 
-async def _persist_message(session_id: str, role: str, content: str, reasoning: str | None = None) -> None:
+async def _persist_message(session_id: str, role: str, content: str, reasoning: str | None = None, tool_calls: list[dict] | None = None, segments: list[dict] | None = None) -> None:
     try:
         async with async_session() as db:
             db.add(
@@ -483,6 +530,7 @@ async def _persist_message(session_id: str, role: str, content: str, reasoning: 
                     role=role,
                     content=content,
                     reasoning_content=reasoning,
+                    tool_calls=json.dumps(segments, ensure_ascii=False) if segments else (json.dumps(tool_calls, ensure_ascii=False) if tool_calls else None),
                 )
             )
             await db.commit()
