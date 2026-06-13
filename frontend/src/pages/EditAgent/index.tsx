@@ -10,13 +10,14 @@ import {
   DownloadOutlined, RobotOutlined, UserOutlined,
   TeamOutlined, FileTextOutlined, CodeOutlined,
   GlobalOutlined, FileOutlined, CloseOutlined, ColumnWidthOutlined, StopOutlined,
+  ThunderboltOutlined, LoadingOutlined, CheckCircleOutlined, CloseCircleOutlined,
 } from '@ant-design/icons';
 import { useAgentStore } from '@/stores/useAgentStore';
 import { agentService } from '@/services/agentService';
 import { sessionService } from '@/services/sessionService';
 import type { Agent } from '@/types/agent';
 import { useChatSocket } from './useChatSocket';
-import type { ChatMsg } from './useChatSocket';
+import type { ChatMsg, Segment } from './useChatSocket';
 import ConfigNav from './sidebar/ConfigNav';
 import SessionList from './sidebar/SessionList';
 import BasicInfoPanel from './panels/BasicInfoPanel';
@@ -449,29 +450,44 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
                 {messages.map((msg) => {
                   const isUser = msg.role === 'user';
                   const { label: timeLabel, title: timeTitle } = formatMsgTime(msg.timestamp);
+                  const hasSegments = !isUser && msg.segments && msg.segments.length > 0;
                   return (
                     <div key={msg.id} style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start', marginBottom: 16 }}>
-                      <div style={{ maxWidth: '70%', display: 'flex', flexDirection: 'column', gap: 2 }}>
+                      <div style={{ maxWidth: '70%', display: 'flex', flexDirection: 'column', gap: hasSegments ? 8 : 2 }}>
                         {timeLabel ? (
                           <div style={{ fontSize: 13, color: '#00000073', textAlign: isUser ? 'right' : 'left', padding: '0 4px' }} title={timeTitle}>
                             {timeLabel}
                           </div>
                         ) : null}
-                        {!isUser && msg.reasoning ? (
-                          <div style={{ fontSize: 12, color: '#00000073', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 8, padding: '8px 12px', whiteSpace: 'pre-wrap' }}>
-                            <div style={{ fontWeight: 500, marginBottom: 4 }}>🧠 思考过程</div>
-                            {msg.reasoning}
+                        {isUser ? (
+                          /* User message: simple bubble */
+                          <div style={{
+                            padding: '10px 16px', borderRadius: 12, fontSize: 14, lineHeight: 1.6,
+                            background: '#1677ff', color: '#fff', whiteSpace: 'pre-wrap',
+                          }}>
+                            {msg.content}
                           </div>
-                        ) : null}
-                        <div style={{
-                          padding: '10px 16px', borderRadius: 12, fontSize: 14, lineHeight: 1.6,
-                          background: isUser ? '#1677ff' : '#f5f5f5',
-                          color: isUser ? '#fff' : '#000000e0',
-                          whiteSpace: 'pre-wrap',
-                        }}>
-                          {msg.content}
-                          {!isUser && msg.pending ? '▍' : null}
-                        </div>
+                        ) : hasSegments ? (
+                          /* Assistant with segments: group reasoning+tool into ThinkingBlock, text segments separate */
+                          <SegmentGroup segments={msg.segments!} pending={msg.pending} />
+                        ) : (
+                          /* Assistant fallback (no segments / old messages) */
+                          <>
+                            {msg.reasoning ? (
+                              <div style={{ fontSize: 12, color: '#00000073', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 8, padding: '8px 12px', whiteSpace: 'pre-wrap' }}>
+                                <div style={{ fontWeight: 500, marginBottom: 4 }}>🧠 思考过程</div>
+                                {msg.reasoning}
+                              </div>
+                            ) : null}
+                            <div style={{
+                              padding: '10px 16px', borderRadius: 12, fontSize: 14, lineHeight: 1.6,
+                              background: '#f5f5f5', color: '#000000e0', whiteSpace: 'pre-wrap',
+                            }}>
+                              {msg.content}
+                              {msg.pending ? '▍' : null}
+                            </div>
+                          </>
+                        )}
                       </div>
                     </div>
                   );
@@ -763,4 +779,175 @@ function WeComPanel() {
 
 function FormCard({ children }: { children: React.ReactNode }) {
   return <div style={{ background: '#fff', border: '1px solid #d9d9d9', borderRadius: 8, padding: 20, marginBottom: 16 }}>{children}</div>;
+}
+
+// ─── Segment Rendering ────────────────────────────
+
+/**
+ * Group segments: consecutive reasoning + tool segments are merged into
+ * a single ThinkingBlock; text segments are rendered separately.
+ *
+ * Layout: [ThinkingBlock(reasoning + tools)] [TextSegment] [TextSegment] ...
+ */
+function SegmentGroup({ segments, pending }: { segments: Segment[]; pending?: boolean }) {
+  const groups: Array<{ type: 'thinking'; items: Segment[] } | { type: 'text'; segment: Segment }> = [];
+  let thinkingBuf: Segment[] = [];
+
+  const flushThinking = () => {
+    if (thinkingBuf.length > 0) {
+      groups.push({ type: 'thinking', items: thinkingBuf });
+      thinkingBuf = [];
+    }
+  };
+
+  for (const seg of segments) {
+    if (seg.kind === 'reasoning' || seg.kind === 'tool') {
+      thinkingBuf.push(seg);
+    } else {
+      flushThinking();
+      groups.push({ type: 'text', segment: seg });
+    }
+  }
+  flushThinking();
+
+  return (
+    <>
+      {groups.map((g, gi) => {
+        if (g.type === 'thinking') {
+          return <ThinkingBlock key={gi} items={g.items} pending={pending} />;
+        }
+        return <TextSegment key={gi} text={g.segment.text} pending={pending} />;
+      })}
+    </>
+  );
+}
+
+/** Unified collapsible thinking block — contains reasoning text + tool calls */
+function ThinkingBlock({ items, pending }: { items: Segment[]; pending?: boolean }) {
+  const [collapsed, setCollapsed] = useState(false);
+  const reasoningParts = items.filter((s) => s.kind === 'reasoning');
+  const toolParts = items.filter((s) => s.kind === 'tool');
+  const reasoningText = reasoningParts.map((s) => s.text).join('');
+  const hasContent = reasoningText.length > 0 || toolParts.length > 0;
+  // Auto-collapse when thinking is done and user hasn't manually toggled
+  const canCollapse = !pending && hasContent;
+
+  return (
+    <div style={{
+      fontSize: 12, color: '#6b5ce7', background: '#f8f6ff',
+      border: '1px solid #e8e0ff', borderRadius: 8, overflow: 'hidden',
+    }}>
+      {/* Header */}
+      <div
+        onClick={() => setCollapsed(!collapsed)}
+        style={{
+          fontWeight: 500, padding: '8px 12px', display: 'flex', alignItems: 'center', gap: 6,
+          cursor: hasContent ? 'pointer' : 'default', userSelect: 'none',
+        }}
+      >
+        <ThunderboltOutlined />
+        思考过程
+        {pending && !hasContent ? <LoadingOutlined style={{ fontSize: 10 }} /> : null}
+        {toolParts.length > 0 ? (
+          <span style={{ fontSize: 11, color: '#6b5ce780', fontWeight: 400 }}>
+            · {toolParts.length} 次工具调用
+          </span>
+        ) : null}
+        {hasContent ? (
+          <span style={{ marginLeft: 'auto', fontSize: 10, color: '#6b5ce780' }}>
+            {collapsed ? '展开' : '收起'}
+          </span>
+        ) : null}
+      </div>
+
+      {/* Collapsible body */}
+      {!collapsed ? (
+        <div style={{ borderTop: hasContent || pending ? '1px solid #e8e0ff' : 'none' }}>
+          {/* Reasoning text */}
+          {reasoningText ? (
+            <div style={{ padding: '8px 12px', whiteSpace: 'pre-wrap', lineHeight: 1.6 }}>
+              {reasoningText}
+              {pending && reasoningParts.length > 0 ? '▍' : null}
+            </div>
+          ) : pending && toolParts.length === 0 ? (
+            <div style={{ padding: '8px 12px' }}>思考中…</div>
+          ) : null}
+
+          {/* Tool calls */}
+          {toolParts.length > 0 ? (
+            <div style={{ padding: '0 8px 8px', display: 'flex', flexDirection: 'column', gap: 6 }}>
+              {toolParts.map((seg, ti) => (
+                <ToolCard key={ti} segment={seg as Extract<Segment, { kind: 'tool' }>} />
+              ))}
+            </div>
+          ) : null}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+/** Tool call card — compact card showing name, args, and result */
+function ToolCard({ segment }: { segment: Extract<Segment, { kind: 'tool' }> }) {
+  const { name, args, output, ok, done } = segment;
+  const headerIcon = done
+    ? (ok ? <CheckCircleOutlined style={{ color: '#52c41a' }} /> : <CloseCircleOutlined style={{ color: '#ff4d4f' }} />)
+    : <LoadingOutlined style={{ color: '#1677ff' }} />;
+
+  return (
+    <div style={{ background: '#fff', border: '1px solid #e8e8e8', borderRadius: 6, fontSize: 12, overflow: 'hidden' }}>
+      {/* Header */}
+      <div style={{
+        display: 'flex', alignItems: 'center', gap: 6,
+        padding: '6px 10px', background: '#fafafa',
+        borderBottom: args || output ? '1px solid #f0f0f0' : 'none',
+      }}>
+        {headerIcon}
+        <code style={{ fontWeight: 600, fontSize: 12, color: '#000000d9' }}>{name || 'tool'}</code>
+        {!done && <span style={{ color: '#1677ff', fontSize: 11 }}>执行中…</span>}
+        {done && ok && <span style={{ color: '#52c41a', fontSize: 11 }}>完成</span>}
+        {done && !ok && <span style={{ color: '#ff4d4f', fontSize: 11 }}>失败</span>}
+      </div>
+
+      {/* Args */}
+      {args ? (
+        <pre style={{
+          margin: 0, padding: '6px 10px', fontSize: 11, lineHeight: 1.5,
+          background: '#f5f5f5', color: '#000000a6',
+          whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+          fontFamily: "'SFMono-Regular', Consolas, monospace",
+          borderBottom: output ? '1px solid #f0f0f0' : 'none',
+        }}>
+          {args}
+        </pre>
+      ) : null}
+
+      {/* Output */}
+      {output ? (
+        <pre style={{
+          margin: 0, padding: '6px 10px', fontSize: 11, lineHeight: 1.5,
+          background: done && !ok ? '#fff2f0' : '#f5f5f5',
+          color: done && !ok ? '#cf1322' : '#000000a6',
+          whiteSpace: 'pre-wrap', wordBreak: 'break-all',
+          fontFamily: "'SFMono-Regular', Consolas, monospace",
+          maxHeight: 200, overflowY: 'auto',
+        }}>
+          {output}
+        </pre>
+      ) : null}
+    </div>
+  );
+}
+
+/** Main content text — grey bubble */
+function TextSegment({ text, pending }: { text: string; pending?: boolean }) {
+  return (
+    <div style={{
+      padding: '10px 16px', borderRadius: 12, fontSize: 14, lineHeight: 1.6,
+      background: '#f5f5f5', color: '#000000e0', whiteSpace: 'pre-wrap',
+    }}>
+      {text}
+      {pending ? '▍' : null}
+    </div>
+  );
 }

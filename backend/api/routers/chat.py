@@ -30,6 +30,7 @@ Architecture:
 from __future__ import annotations
 
 import asyncio
+from typing import TYPE_CHECKING
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from sqlalchemy import select
@@ -39,6 +40,9 @@ from api.database import async_session
 from api.llm_client import LLMClient
 from api.models import models as M
 from api.util import new_id
+
+if TYPE_CHECKING:
+    from agent_runtime.base import AgentAdapter
 
 router = APIRouter(tags=["chat"])
 
@@ -110,6 +114,9 @@ async def chat_websocket(ws: WebSocket, agent_id: str, session_id: str) -> None:
             _session_worker(
                 session_id=resolved_session_id,
                 model=agent_model,
+                mode=agent.mode,  # "claude" or "normal"
+                agent_id=agent_id,
+                user=user,
                 model_config=model_config,
                 ws_holder=ws_holder,
                 llm_holder=llm_holder,
@@ -196,17 +203,20 @@ async def chat_websocket(ws: WebSocket, agent_id: str, session_id: str) -> None:
 async def _session_worker(
     session_id: str,
     model: str,
+    mode: str,
+    agent_id: str,
+    user: str,
     model_config: M.ModelConfig | None,
     ws_holder: list[WebSocket | None],
     llm_holder: list[LLMClient | None],
     msg_queue: asyncio.Queue[str | None],
 ) -> None:
-    """Consume messages one at a time. Reuses LLM subprocess across turns.
-
-    The LLM subprocess is kept alive between turns so agent/chat.py maintains
-    conversation history. It is only recreated if abort closed it.
+    """Consume messages one at a time. Uses AgentAdapter to route to the
+    correct backend (Claude Agent SDK for mode=claude, raw HTTP otherwise).
     """
-    llm: LLMClient | None = None
+    from agent_runtime.registry import create_adapter
+
+    adapter = await create_adapter(mode, agent_id, user, session_id, model_config)
 
     try:
         while True:
@@ -219,45 +229,29 @@ async def _session_worker(
             # ── Signal frontend: turn starting ──
             _try_push(ws_holder, {"type": "turn_start", "text": text, "turnId": turn_id})
 
-            # ── Ensure LLM subprocess is running ──
-            if llm is None and model_config is not None:
-                try:
-                    llm = LLMClient()
-                    await llm.start(
-                        model=model_config.model_id,
-                        base_url=model_config.base_url,
-                        api_key=model_config.api_key,
-                    )
-                except Exception as exc:
-                    _try_push(ws_holder, {"type": "error", "message": f"LLM 启动失败: {exc}", "turnId": turn_id})
-                    continue
-
             # ── Store reference for abort access ──
-            llm_holder[0] = llm
+            llm_holder[0] = adapter.client
 
             # ── Process this turn ──
-            llm_alive = await _process_turn(session_id, text, model, model_config, ws_holder, llm, turn_id)
+            client_alive = await _process_turn(
+                session_id, text, model, model_config, ws_holder, adapter, turn_id,
+                skip_mock=(mode == "claude"),
+            )
 
             # ── Clean up reference ──
             llm_holder[0] = None
 
-            if not llm_alive or not llm.is_alive():
-                # Subprocess was killed (abort or error) or died — discard and recreate next turn
-                if llm:
-                    try:
-                        await llm.close()
-                    except Exception:
-                        pass
-                llm = None
+            # ── Check if client died ──
+            if not client_alive or not adapter.is_alive():
+                await adapter.close()
+                # Re-create adapter (fresh client on next turn)
+                adapter = await create_adapter(mode, agent_id, user, session_id, model_config)
+
     except asyncio.CancelledError:
         return
     finally:
         llm_holder[0] = None
-        if llm:
-            try:
-                await llm.close()
-            except Exception:
-                pass
+        await adapter.close()
 
 
 async def _process_turn(
@@ -266,31 +260,35 @@ async def _process_turn(
     model: str,
     model_config: M.ModelConfig | None,
     ws_holder: list[WebSocket | None],
-    llm: LLMClient | None,
+    adapter: AgentAdapter | LLMClient | None,
     turn_id: str,
+    skip_mock: bool = False,
 ) -> bool:
     """Process one user message: call LLM, stream, persist reply.
 
     User message is already persisted when received (not here).
     Returns True if the LLM subprocess is still alive (can be reused),
     False if it was killed (abort or fatal error).
+
+    When skip_mock is True, the mock tool events are skipped (used for
+    Claude Agent mode where the SDK handles tool calls natively).
     """
 
-    if model_config is None:
-        _try_push(ws_holder, {"type": "error", "message": f"模型 {model} 未配置或未启用"})
-        return True
-
-    if llm is None:
+    if adapter is None:
         return False
 
-    # Send to LLM subprocess
+    # Send user text to the backend (triggers lazy client init on first call)
     try:
-        await llm.send(text)
-    except Exception:
-        # Subprocess was closed (abort). User message is already in DB —
-        # that's fine, it shows what the user asked even without a response.
-        _try_push(ws_holder, {"type": "error", "message": "处理中断"})
+        await adapter.send(text)
+    except Exception as exc:
+        _try_push(ws_holder, {"type": "error", "message": f"Agent 启动失败: {exc}"})
         return False
+
+    # ── Mock tool events for frontend debugging ──
+    # TODO: Remove when real tool execution is wired in.
+    # Only used in normal mode; Claude Agent mode has real tool calls via SDK.
+    if not skip_mock:
+        await _emit_mock_tool_events(ws_holder, turn_id)
 
     # Read streaming response
     content_parts: list[str] = []
@@ -298,7 +296,7 @@ async def _process_turn(
     error_msg: str | None = None
 
     try:
-        async for event in llm.read_deltas():
+        async for event in adapter.read_deltas():
             event_type = event.get("type")
 
             if event_type == "model_delta":
@@ -338,7 +336,7 @@ async def _process_turn(
         await _persist_message(session_id, "assistant", f"[错误] {error_msg}")
 
     # If read_deltas() hit EOF, the subprocess is dead — don't reuse it.
-    if llm.eof:
+    if not adapter.is_alive():
         if content_parts or reasoning_parts:
             await _persist_message(
                 session_id, "assistant",
@@ -355,6 +353,107 @@ async def _process_turn(
 # ═══════════════════════════════════════════════════════════════════════
 # Helpers
 # ═══════════════════════════════════════════════════════════════════════
+
+
+async def _emit_mock_tool_events(
+    ws_holder: list[WebSocket | None],
+    turn_id: str,
+) -> None:
+    """Send mock tool events to the frontend for segment rendering development.
+
+    Simulates a realistic agent turn:
+      reasoning → tool1 → tool2 → tool3 → then LLM produces final text.
+    Then the real LLM streaming continues after this function returns.
+
+    TODO: Remove when real tool execution is wired in.
+    """
+    import asyncio
+
+    # 1. Reasoning — initial thinking
+    reasoning_text = "让我分析一下用户的需求，需要先搜索相关文件，再查看具体实现，最后验证一下配置..."
+    for chunk in _split_chunks(reasoning_text, 8):
+        _try_push(ws_holder, {"type": "model_delta", "channel": "reasoning", "text": chunk, "turnId": turn_id})
+        await asyncio.sleep(0.02)
+    await asyncio.sleep(0.1)
+
+    # ── Tool 1: search_files ──
+    await _mock_one_tool(ws_holder, turn_id, "call_search_1", "search_files",
+                         '{"query": "vera-agent", "max_results": 5}',
+                         True,
+                         "Found 3 files:\n1. backend/api/routers/chat.py\n2. frontend/src/pages/EditAgent/useChatSocket.ts\n3. backend/agent/chat.py")
+    await asyncio.sleep(0.1)
+
+    # More reasoning between tools
+    more_reasoning = "找到了几个关键文件，让我看看 chat.py 的具体实现..."
+    for chunk in _split_chunks(more_reasoning, 8):
+        _try_push(ws_holder, {"type": "model_delta", "channel": "reasoning", "text": chunk, "turnId": turn_id})
+        await asyncio.sleep(0.02)
+    await asyncio.sleep(0.05)
+
+    # ── Tool 2: read_file ──
+    await _mock_one_tool(ws_holder, turn_id, "call_read_1", "read_file",
+                         '{"path": "backend/api/routers/chat.py"}',
+                         True,
+                         "# chat.py — WebSocket endpoint\n\nasync def chat_websocket(ws, agent_id, session_id):\n    await ws.accept()\n    # ... 120 lines omitted")
+    await asyncio.sleep(0.1)
+
+    # More reasoning
+    more_reasoning2 = "已经了解了代码结构，再检查一下模型配置..."
+    for chunk in _split_chunks(more_reasoning2, 8):
+        _try_push(ws_holder, {"type": "model_delta", "channel": "reasoning", "text": chunk, "turnId": turn_id})
+        await asyncio.sleep(0.02)
+    await asyncio.sleep(0.05)
+
+    # ── Tool 3: check_config (simulated failure) ──
+    await _mock_one_tool(ws_holder, turn_id, "call_config_1", "check_model_config",
+                         '{"model_id": "deepseek-v4-pro"}',
+                         False,
+                         "Error: Model 'deepseek-v4-pro' is not enabled.\nPlease check ModelConfig table.")
+    await asyncio.sleep(0.1)
+
+
+async def _mock_one_tool(
+    ws_holder: list[WebSocket | None],
+    turn_id: str,
+    call_id: str,
+    name: str,
+    args_text: str,
+    ok: bool,
+    output: str,
+) -> None:
+    """Emit a single tool call lifecycle: preparing → args streaming → intent → result."""
+    import asyncio
+
+    # preparing
+    _try_push(ws_holder, {
+        "type": "tool.preparing", "turnId": turn_id,
+        "callId": call_id, "name": name,
+    })
+
+    # Stream args
+    for chunk in _split_chunks(args_text, 6):
+        _try_push(ws_holder, {"type": "model_delta", "channel": "tool_args", "text": chunk, "turnId": turn_id})
+        await asyncio.sleep(0.015)
+
+    # intent
+    _try_push(ws_holder, {
+        "type": "tool.intent", "turnId": turn_id,
+        "callId": call_id, "name": name, "args": args_text,
+    })
+
+    # Execution delay
+    await asyncio.sleep(0.4 + len(output) * 0.001)
+
+    # result
+    _try_push(ws_holder, {
+        "type": "tool.result", "turnId": turn_id,
+        "callId": call_id, "ok": ok, "output": output,
+    })
+
+
+def _split_chunks(text: str, size: int) -> list[str]:
+    """Split text into chunks of given size."""
+    return [text[i:i + size] for i in range(0, len(text), size)]
 
 
 def _try_push(ws_holder: list[WebSocket | None], data: dict) -> None:

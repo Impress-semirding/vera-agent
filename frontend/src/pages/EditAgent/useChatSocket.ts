@@ -3,7 +3,14 @@ import { message } from 'antd';
 import { sessionService } from '@/services/sessionService';
 import { getUserName } from '@/services/authUser';
 
-/** A single chat message. Assistant messages may carry a reasoning trace. */
+// ─── Segment model ─────────────────────────────────
+
+export type Segment =
+  | { kind: 'reasoning'; text: string }
+  | { kind: 'text'; text: string }
+  | { kind: 'tool'; callId: string; name: string; args: string; output?: string; ok?: boolean; done: boolean };
+
+/** A single chat message. Assistant messages may carry structured segments. */
 export interface ChatMsg {
   id: string;
   role: 'user' | 'assistant';
@@ -12,9 +19,47 @@ export interface ChatMsg {
   pending?: boolean;
   turnId?: string;
   timestamp?: string;
+  segments?: Segment[];
 }
 
 export type ChatStatus = 'idle' | 'connecting' | 'open' | 'closed';
+
+// ─── Segment helpers ────────────────────────────────
+
+/** Find or create the last segment of a given kind, optionally matching a callId. */
+function upsertSegment(
+  segments: Segment[],
+  kind: 'reasoning' | 'text' | 'tool',
+  callId?: string,
+): { segments: Segment[]; index: number } {
+  const next = [...segments];
+
+  if (kind === 'tool') {
+    // Find existing tool segment by callId
+    const idx = callId ? next.findIndex((s) => s.kind === 'tool' && s.callId === callId) : -1;
+    if (idx !== -1) return { segments: next, index: idx };
+    // Create new tool segment
+    const seg: Segment = { kind: 'tool', callId: callId || '', name: '', args: '', done: false };
+    next.push(seg);
+    return { segments: next, index: next.length - 1 };
+  }
+
+  // For reasoning / text: find the LAST segment of this kind (only if it's the last segment overall)
+  for (let i = next.length - 1; i >= 0; i--) {
+    if (next[i].kind === kind) {
+      // Only reuse if it's the last segment (don't go back and modify earlier ones)
+      if (i === next.length - 1) return { segments: next, index: i };
+      break;
+    }
+  }
+
+  // Create new segment
+  const seg: Segment = kind === 'reasoning' ? { kind: 'reasoning', text: '' } : { kind: 'text', text: '' };
+  next.push(seg);
+  return { segments: next, index: next.length - 1 };
+}
+
+// ─── WebSocket base ─────────────────────────────────
 
 function wsBase(): string {
   const proto = window.location.protocol === 'https:' ? 'wss' : 'ws';
@@ -22,19 +67,12 @@ function wsBase(): string {
 }
 
 // Reconnect configuration
-const RECONNECT_BASE_DELAY = 1000; // ms
-const RECONNECT_MAX_DELAY = 30000; // ms
+const RECONNECT_BASE_DELAY = 1000;
+const RECONNECT_MAX_DELAY = 30000;
 const RECONNECT_MAX_ATTEMPTS = 10;
 
-/**
- * Drives a streaming chat over a WebSocket for one (agentId, sessionId).
- *
- * Features:
- * - Loads message history from the REST API when the session changes.
- * - Auto-reconnect with exponential backoff on unexpected disconnect.
- * - Heartbeat (ping/pong) to detect dead connections.
- * - Buffers outbound messages until the socket is open.
- */
+// ─── Main hook ──────────────────────────────────────
+
 export function useChatSocket(
   agentId: string | undefined,
   sessionId: string | undefined,
@@ -53,34 +91,49 @@ export function useChatSocket(
 
   const handleEventRef = useRef<(data: any) => void>(() => {});
 
+  // ─── Helper: find message index by turnId ────
+  const findMsgIdx = (next: ChatMsg[], tid?: string): number => {
+    if (tid) {
+      const idx = next.findIndex((m) => m.turnId === tid);
+      if (idx !== -1) return idx;
+    }
+    // Fallback: last assistant message
+    const last = next[next.length - 1];
+    return (last && last.role === 'assistant') ? next.length - 1 : -1;
+  };
+
   const handleEvent = useCallback(
     (data: any) => {
       const t = data?.type;
+
+      // ─── Error ───
       if (t === 'error') {
         message.error(data?.message || '聊天出错');
         setStreaming(false);
         return;
       }
+
+      // ─── Session created ───
       if (t === 'session' && data?.sessionId) {
         onSessionCreated(data.sessionId);
         return;
       }
-      if (t === 'ready') {
-        return;
-      }
+
+      // ─── Ready ───
+      if (t === 'ready') return;
+
+      // ─── Stopped (abort) ───
       if (t === 'stopped') {
-        // Current turn was aborted. Set false for now; if queue has more
-        // messages, the worker will send another turn_start immediately.
         setStreaming(false);
         return;
       }
+
+      // ─── Turn start ───
       if (t === 'turn_start') {
-        // Worker picked up a message from the queue — pre-create assistant message with turnId.
         const tid = data?.turnId;
         if (tid) {
           setStreaming(true);
           setMessages((prev) => {
-            // Avoid duplicate if somehow already exists.
             if (prev.some((m) => m.turnId === tid)) return prev;
             return [...prev, {
               id: `a-${Date.now()}-${Math.random()}`,
@@ -90,6 +143,7 @@ export function useChatSocket(
               pending: true,
               turnId: tid,
               timestamp: new Date().toISOString(),
+              segments: [],
             }];
           });
         } else {
@@ -97,64 +151,135 @@ export function useChatSocket(
         }
         return;
       }
+
+      // ─── Ping ───
       if (t === 'ping') {
-        // Respond to server heartbeat
         const ws = wsRef.current;
         if (ws && ws.readyState === WebSocket.OPEN) {
           ws.send(JSON.stringify({ type: 'pong' }));
         }
         return;
       }
-      if (t === 'user_message') {
-        // Server echo of user message — already added optimistically in send().
-        // Ignore to avoid duplicates.
-        return;
-      }
+
+      // ─── User message echo (ignored) ───
+      if (t === 'user_message') return;
+
+      // ─── Model delta (content / reasoning / tool_args) ───
       if (t === 'model_delta') {
         const channel = data?.channel;
         const text: string = data?.text ?? '';
         const tid = data?.turnId;
+
         setMessages((prev) => {
           const next = [...prev];
-          // Find the assistant message by turnId, or fall back to last pending assistant.
-          let idx = tid ? next.findIndex((m) => m.turnId === tid) : -1;
-          if (idx === -1) {
-            idx = next.length - 1;
-            const last = next[idx];
-            if (!last || last.role !== 'assistant' || !last.pending) {
-              // No matching message — create one.
-              const msg: ChatMsg = {
-                id: `a-${Date.now()}-${Math.random()}`,
-                role: 'assistant',
-                content: '',
-                reasoning: '',
-                pending: true,
-                turnId: tid || undefined,
-                timestamp: new Date().toISOString(),
-              };
-              next.push(msg);
-              idx = next.length - 1;
-            }
-          }
+          let idx = findMsgIdx(next, tid);
+          if (idx === -1) return prev;
           const target = next[idx];
+
+          // Update flat fields for backward compat
           if (channel === 'reasoning') {
             next[idx] = { ...target, reasoning: (target.reasoning || '') + text };
-          } else {
+          } else if (channel === 'content') {
             next[idx] = { ...target, content: (target.content || '') + text };
+          }
+
+          // Update segments
+          if (target.segments != null) {
+            const segs = [...target.segments];
+            if (channel === 'tool_args') {
+              // Append to the last incomplete tool segment's args
+              let ti = segs.findLastIndex((s) => s.kind === 'tool' && !s.done);
+              if (ti === -1) {
+                // No incomplete tool segment — create one
+                segs.push({ kind: 'tool', callId: '', name: '', args: '', done: false });
+                ti = segs.length - 1;
+              }
+              const seg = { ...segs[ti] } as Extract<Segment, { kind: 'tool' }>;
+              seg.args = seg.args + text;
+              segs[ti] = seg;
+              next[idx] = { ...next[idx], segments: segs };
+            } else {
+              const kind = channel === 'reasoning' ? 'reasoning' : 'text';
+              const { segments: updated, index: si } = upsertSegment(segs, kind);
+              const seg = { ...updated[si] } as Extract<Segment, { kind: 'reasoning' | 'text' }>;
+              seg.text = seg.text + text;
+              updated[si] = seg;
+              next[idx] = { ...next[idx], segments: updated };
+            }
           }
           return next;
         });
         return;
       }
+
+      // ─── Tool preparing ───
+      if (t === 'tool.preparing') {
+        const tid = data?.turnId;
+        const callId: string = data?.callId ?? '';
+        const name: string = data?.name ?? '';
+        setMessages((prev) => {
+          const next = [...prev];
+          const idx = findMsgIdx(next, tid);
+          if (idx === -1) return prev;
+          const target = next[idx];
+          if (target.segments == null) return prev;
+          const segs = [...target.segments];
+          segs.push({ kind: 'tool', callId, name, args: '', done: false });
+          next[idx] = { ...target, segments: segs };
+          return next;
+        });
+        return;
+      }
+
+      // ─── Tool intent (full args ready) ───
+      if (t === 'tool.intent') {
+        const tid = data?.turnId;
+        const callId: string = data?.callId ?? '';
+        const name: string = data?.name ?? '';
+        const args: string = data?.args ?? '';
+        setMessages((prev) => {
+          const next = [...prev];
+          const idx = findMsgIdx(next, tid);
+          if (idx === -1) return prev;
+          const target = next[idx];
+          if (target.segments == null) return prev;
+          const segs = target.segments.map((s) =>
+            s.kind === 'tool' && s.callId === callId ? { ...s, name, args } : s,
+          );
+          next[idx] = { ...target, segments: segs };
+          return next;
+        });
+        return;
+      }
+
+      // ─── Tool result ───
+      if (t === 'tool.result') {
+        const tid = data?.turnId;
+        const callId: string = data?.callId ?? '';
+        const ok: boolean = data?.ok ?? false;
+        const output: string = data?.output ?? '';
+        setMessages((prev) => {
+          const next = [...prev];
+          const idx = findMsgIdx(next, tid);
+          if (idx === -1) return prev;
+          const target = next[idx];
+          if (target.segments == null) return prev;
+          const segs = target.segments.map((s) =>
+            s.kind === 'tool' && s.callId === callId ? { ...s, ok, output, done: true } : s,
+          );
+          next[idx] = { ...target, segments: segs };
+          return next;
+        });
+        return;
+      }
+
+      // ─── Model final ───
       if (t === 'model_final') {
         const tid = data?.turnId;
         setMessages((prev) => {
           const next = [...prev];
-          // Find by turnId first, then fall back to last assistant message.
-          let idx = tid ? next.findIndex((m) => m.turnId === tid) : -1;
-          if (idx === -1) {
-            idx = next.length - 1;
-          }
+          const idx = findMsgIdx(next, tid);
+          if (idx === -1) return prev;
           const target = next[idx];
           if (target && target.role === 'assistant') {
             next[idx] = {
@@ -216,8 +341,7 @@ export function useChatSocket(
 
     ws.onopen = () => {
       setStatus('open');
-      reconnectAttemptRef.current = 0; // reset on successful connect
-      // Send any buffered message
+      reconnectAttemptRef.current = 0;
       if (pendingRef.current) {
         ws.send(JSON.stringify({ type: 'user_input', text: pendingRef.current }));
         pendingRef.current = null;
@@ -237,15 +361,12 @@ export function useChatSocket(
     ws.onclose = (ev) => {
       wsRef.current = null;
       setStatus('closed');
-      // Auto-reconnect unless intentionally closed or normal closure
       if (!intentionalCloseRef.current && !ev.wasClean) {
         scheduleReconnect();
       }
     };
 
-    ws.onerror = () => {
-      // onclose will fire after this, which handles reconnect
-    };
+    ws.onerror = () => {};
   };
 
   const scheduleReconnect = () => {
@@ -263,7 +384,6 @@ export function useChatSocket(
 
   // ─── Open/close WebSocket when session changes ───
   useEffect(() => {
-    // Clean up previous connection
     intentionalCloseRef.current = true;
     if (reconnectTimerRef.current) {
       clearTimeout(reconnectTimerRef.current);
@@ -280,7 +400,6 @@ export function useChatSocket(
       return;
     }
 
-    // Open new connection
     intentionalCloseRef.current = false;
     connectRef.current();
 
@@ -302,7 +421,6 @@ export function useChatSocket(
       const trimmed = text.trim();
       if (!trimmed || !agentId) return;
 
-      // No session yet → create one
       if (!sessionId) {
         if (creatingRef.current) return;
         creatingRef.current = true;
@@ -317,8 +435,6 @@ export function useChatSocket(
         return;
       }
 
-      // Optimistically add user message to chat immediately (real send order).
-      // Server's user_message echo is ignored to avoid duplicates.
       setMessages((prev) => [...prev, {
         id: `u-${Date.now()}-${Math.random()}`,
         role: 'user',
@@ -330,8 +446,7 @@ export function useChatSocket(
       if (ws && ws.readyState === WebSocket.OPEN) {
         ws.send(JSON.stringify({ type: 'user_input', text: trimmed }));
       } else {
-        pendingRef.current = trimmed; // buffer until (re)connected
-        // Try to reconnect if closed
+        pendingRef.current = trimmed;
         if (!ws || ws.readyState === WebSocket.CLOSED) {
           reconnectAttemptRef.current = 0;
           connectRef.current();
