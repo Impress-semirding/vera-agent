@@ -54,6 +54,8 @@ class AgentFormData(BaseModel):
     mode: str = "claude"  # claude | normal
     avatarUrl: str | None = None
     visibility: bool = True
+    wechatEnabled: bool = False
+    wechatToken: str | None = None
 
 
 # Backwards-compatible alias used by older code paths.
@@ -68,6 +70,8 @@ class AgentUpdate(BaseModel):
     mode: str | None = None
     avatarUrl: str | None = None
     visibility: bool | None = None
+    wechatEnabled: bool | None = None
+    wechatToken: str | None = None
 
 
 class AgentOut(BaseModel):
@@ -82,6 +86,8 @@ class AgentOut(BaseModel):
     starred: bool
     createdBy: str
     updatedBy: str
+    wechatEnabled: bool | None = None
+    wechatToken: str | None = None
     updatedAt: str
     createdAt: str
 
@@ -440,6 +446,26 @@ class ModelConfigOut(BaseModel):
     enabled: bool
     updatedAt: str
     createdAt: str
+
+
+# ═══════════════════════ WeChat iLink ═══════════════════════
+
+
+class WeChatLoginResponse(BaseModel):
+    """Response after starting QR code login."""
+    qrcode: str = ""  # QR code string for polling
+    qrcodeImg: str = ""  # base64-encoded PNG image for display
+    loginStatus: str = "pending"  # pending|scanned|confirmed|expired
+
+
+class WeChatStatusResponse(BaseModel):
+    """Full WeChat connection status for an agent."""
+    enabled: bool = False
+    loginStatus: str = "disconnected"  # pending|scanned|confirmed|disconnected
+    ilinkUserId: str | None = None
+    ilinkBotId: str | None = None
+    qrcode: str | None = None
+    qrcodeImg: str | None = None
 
 
 ConfigFileTreeNode.model_rebuild()

@@ -19,6 +19,8 @@ class Agent(Base):
     starred: Mapped[bool] = mapped_column(Boolean, default=False)
     created_by: Mapped[str] = mapped_column(String(100), default="anonymous")
     updated_by: Mapped[str] = mapped_column(String(100), default="anonymous")
+    wechat_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    wechat_token: Mapped[str | None] = mapped_column(String(200), nullable=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
@@ -195,6 +197,25 @@ class ModifyRecord(Base):
     action: Mapped[str] = mapped_column(String(500), nullable=False)
     detail: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class WeChatiLink(Base):
+    """iLink WeChat bot credentials per agent.
+
+    Stores the QR-code-logged-in bot token and session data needed to
+    long-poll for messages and send replies via iLink API.
+    """
+    __tablename__ = "wechat_ilinks"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id"), nullable=False, unique=True)
+    bot_token: Mapped[str | None] = mapped_column(String(500))
+    ilink_bot_id: Mapped[str | None] = mapped_column(String(200))
+    ilink_user_id: Mapped[str | None] = mapped_column(String(200))
+    base_url: Mapped[str | None] = mapped_column(String(500))
+    qrcode: Mapped[str | None] = mapped_column(Text)  # current QR code string during login
+    login_status: Mapped[str] = mapped_column(String(20), default="disconnected")  # pending|scanned|confirmed|disconnected
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
 class ModelConfig(Base):

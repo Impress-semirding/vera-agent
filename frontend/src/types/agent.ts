@@ -12,6 +12,8 @@ export interface Agent {
   avatarUrl?: string;
   visibility: boolean;
   starred: boolean;
+  wechatEnabled?: boolean;
+  wechatToken?: string | null;
   createdBy: string;
   updatedBy: string;
   updatedAt: string;

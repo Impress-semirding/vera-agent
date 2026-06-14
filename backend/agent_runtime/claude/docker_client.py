@@ -35,21 +35,24 @@ class DockerAgentClient:
 
     @classmethod
     async def ensure_image(cls) -> None:
-        """Build the Docker image if it doesn't exist."""
+        """Check if Docker image exists, build only if missing."""
         # Check if image exists
         proc = await asyncio.create_subprocess_exec(
             "docker", "image", "inspect", cls.IMAGE_NAME,
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
         )
-        rc = await proc.wait()
-        if rc == 0:
-            return  # already built
+        stdout, stderr = await proc.communicate()
+        if proc.returncode == 0:
+            print(f"[docker] Image {cls.IMAGE_NAME} exists, skip build", flush=True)
+            return
+
+        # Image doesn't exist
+        print(f"[docker] Image {cls.IMAGE_NAME} NOT FOUND (stdout={stdout.decode()[:100]!r} stderr={stderr.decode()[:100]!r}), building...", flush=True)
 
         docker_dir = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "docker"
         )
-        print(f"[docker] Building {cls.IMAGE_NAME}...", flush=True)
         proc = await asyncio.create_subprocess_exec(
             "docker", "build", "-t", cls.IMAGE_NAME, docker_dir,
             stdout=asyncio.subprocess.PIPE,

@@ -37,6 +37,8 @@ def _agent_out(a: M.Agent) -> dict:
         "model": a.model,
         "avatarUrl": a.avatar_url,
         "visibility": a.visibility,
+        "wechatEnabled": a.wechat_enabled,
+        "wechatToken": a.wechat_token,
         "starred": a.starred,
         "createdBy": a.created_by,
         "updatedBy": a.updated_by,
@@ -127,6 +129,8 @@ async def create_agent(
         model=data.model,
         avatar_url=data.avatarUrl,
         visibility=data.visibility,
+        wechat_enabled=data.wechatEnabled,
+        wechat_token=data.wechatToken or (new_id() if data.wechatEnabled else None),
         starred=False,
         created_by=user,
         updated_by=user,
@@ -153,11 +157,16 @@ async def update_agent(
         "mode": "mode",
         "avatarUrl": "avatar_url",
         "visibility": "visibility",
+        "wechatEnabled": "wechat_enabled",
+        "wechatToken": "wechat_token",
     }
     for fe, col in field_map.items():
         value = getattr(data, fe)
         if value is not None:
             setattr(agent, col, value)
+    # Auto-generate token when WeChat is first enabled
+    if data.wechatEnabled and not agent.wechat_token:
+        agent.wechat_token = new_id()
     agent.updated_by = user
     await db.commit()
     await db.refresh(agent)

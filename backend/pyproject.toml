@@ -24,6 +24,9 @@ dependencies = [
     "websockets>=12.0",
     # YAML parsing (skill zip manifests)
     "pyyaml>=6.0",
+    # WeChat iLink (QR code generation + media encryption)
+    "qrcode>=7.4",
+    "cryptography>=42",
 ]
 
 [tool.hatch.build.targets.wheel]

@@ -347,7 +347,7 @@ export default function EditAgentPage() {
               {activePanel === 'session' && (
                 <SessionSettingsPanel settings={sessionSettings} onChange={setSessionSettings} onPreview={setEffectPreview} />
               )}
-              {activePanel === 'wecom' && <WeComPanel />}
+              {activePanel === 'wecom' && agent && <WeComPanel agent={agent} agentId={agentId!} />}
             </div>
           </>
         )}
@@ -820,62 +820,174 @@ function SessionSettingsPanel({ settings, onChange, onPreview }: {
   );
 }
 
-// ─── Panel: WeCom ────────────────────────────────
-function WeComPanel() {
-  const [enabled, setEnabled] = useState(true);
+// ─── Panel: WeChat iLink ─────────────────────────
+function WeChatPanel({ agent, agentId }: { agent: Agent; agentId: string }) {
+  const [loginStatus, setLoginStatus] = useState<string>('disconnected');
+  const [ilinkUserId, setIlinkUserId] = useState<string | null>(null);
+  const [qrcodeImg, setQrcodeImg] = useState<string | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [enabled, setEnabled] = useState(agent.wechatEnabled ?? false);
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+
+  // Load current status on mount
+  useEffect(() => {
+    agentService.getWechatStatus(agentId).then((res: any) => {
+      const d = res.data;
+      setLoginStatus(d.loginStatus);
+      setIlinkUserId(d.ilinkUserId ?? null);
+      setEnabled(d.enabled);
+    }).catch(() => {});
+    return () => { if (pollRef.current) clearInterval(pollRef.current); };
+  }, [agentId]);
+
+  // ─── QR Code Login ────────────────────────────
+  const startLogin = async () => {
+    setLoading(true);
+    try {
+      const res: any = await agentService.startWechatLogin(agentId);
+      const d = res.data;
+      setQrcodeImg(d.qrcodeImg);
+      setLoginStatus(d.loginStatus);
+
+      // Poll status every 2s
+      if (pollRef.current) clearInterval(pollRef.current);
+      pollRef.current = setInterval(async () => {
+        try {
+          const r: any = await agentService.pollWechatLogin(agentId);
+          const s = r.data;
+          setLoginStatus(s.loginStatus);
+          if (s.loginStatus === 'confirmed') {
+            if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+            setIlinkUserId(s.ilinkUserId ?? null);
+            setQrcodeImg(null);
+            setEnabled(true);
+            message.success('微信已连接');
+          } else if (s.loginStatus === 'expired') {
+            if (pollRef.current) { clearInterval(pollRef.current); pollRef.current = null; }
+            setQrcodeImg(null);
+          }
+        } catch { /* polling continues on error */ }
+      }, 2000);
+    } catch {
+      message.error('获取二维码失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ─── Disconnect ──────────────────────────────
+  const disconnect = async () => {
+    setLoading(true);
+    try {
+      await agentService.disconnectWechat(agentId);
+      setLoginStatus('disconnected');
+      setIlinkUserId(null);
+      setQrcodeImg(null);
+      setEnabled(false);
+      message.success('已断开微信连接');
+    } catch {
+      message.error('断开失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ─── Toggle ──────────────────────────────────
+  const toggleEnabled = async (v: boolean) => {
+    if (v && loginStatus !== 'confirmed') {
+      // Need to login first
+      await startLogin();
+      return;
+    }
+    setLoading(true);
+    try {
+      await agentService.toggleWechat(agentId, v);
+      setEnabled(v);
+    } catch (e: any) {
+      message.error(e?.response?.data?.detail || '操作失败');
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // ─── Render ──────────────────────────────────
+  const statusLabel: Record<string, { text: string; color: string }> = {
+    disconnected: { text: '未连接', color: '#00000040' },
+    pending: { text: '等待扫码', color: '#faad14' },
+    scanned: { text: '已扫码，请确认', color: '#1677ff' },
+    confirmed: { text: '已连接', color: '#52c41a' },
+    expired: { text: '二维码已过期', color: '#ff4d4f' },
+  };
+  const s = statusLabel[loginStatus] ?? statusLabel.disconnected;
+
   return (
     <FormCard>
+      <h4 style={{ fontWeight: 600, marginBottom: 24 }}>微信绑定</h4>
+
       {/* Toggle */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 16, border: '1px solid #d9d9d9', borderRadius: 8, marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-          <div style={{ width: 40, height: 40, borderRadius: 8, background: '#f3e8ff', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-            <MessageOutlined style={{ color: '#722ed1' }} />
+        <div>
+          <div style={{ fontWeight: 500 }}>
+            微信连接
+            <Tag color={s.color === '#52c41a' ? 'success' : s.color === '#ff4d4f' ? 'error' : s.color === '#faad14' ? 'warning' : 'default'} style={{ marginLeft: 8 }}>{s.text}</Tag>
           </div>
-          <div>
-            <div style={{ fontWeight: 500 }}>企微连接</div>
-            <p style={{ fontSize: 12, color: '#00000073', marginTop: 4 }}>通过 3 个步骤完成连接</p>
-          </div>
+          <p style={{ fontSize: 12, color: '#00000073', marginTop: 4 }}>
+            {loginStatus === 'confirmed'
+              ? `已绑定: ${ilinkUserId || '(未知用户)'}`
+              : '扫码即可在微信中使用 Vera Agent'}
+          </p>
         </div>
-        <Switch checked={enabled} onChange={setEnabled} />
+        {loginStatus === 'confirmed' ? (
+          <Button danger size="small" loading={loading} onClick={disconnect}>断开</Button>
+        ) : (
+          <Button type="primary" size="small" loading={loading} onClick={() => toggleEnabled(true)}>
+            扫码绑定
+          </Button>
+        )}
       </div>
-      {/* Credentials */}
-      <div style={{ border: '1px solid #d9d9d9', borderRadius: 8, padding: 16, marginBottom: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-          <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#1f1f1f', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>2</div>
-          <span style={{ fontWeight: 500 }}>填写机器人凭证</span>
+
+      {/* QR Code */}
+      {(loginStatus === 'pending' || loginStatus === 'scanned') && qrcodeImg && (
+        <div style={{ textAlign: 'center', padding: 24, border: '1px solid #d9d9d9', borderRadius: 8, marginBottom: 16 }}>
+          <img
+            src={`data:image/png;base64,${qrcodeImg}`}
+            alt="微信扫码"
+            style={{ width: 200, height: 200, imageRendering: 'pixelated' }}
+          />
+          <p style={{ marginTop: 12, fontSize: 14, color: '#1677ff', fontWeight: 500 }}>
+            {loginStatus === 'scanned' ? '✓ 已扫码，请在手机上确认登录' : '请使用微信扫描二维码'}
+          </p>
+          <p style={{ fontSize: 12, color: '#00000073' }}>
+            二维码有效期为 5 分钟
+          </p>
         </div>
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16 }}>
-          <div><label style={{ fontSize: 14 }}>机器人 ID *</label><Input style={{ marginTop: 4 }} defaultValue="aibkHGed147nfCXOBGrmUS-pvCaO155N4N_" /></div>
-          <div><label style={{ fontSize: 14 }}>密钥 / KEY *</label><Input style={{ marginTop: 4 }} defaultValue="DcBFECtxWgmS7XQ5BkjMrvWLycZfGxzjdPYnyayR77U" /></div>
+      )}
+
+      {/* Expired */}
+      {loginStatus === 'expired' && (
+        <div style={{ textAlign: 'center', padding: 24, border: '1px solid #d9d9d9', borderRadius: 8, marginBottom: 16 }}>
+          <p style={{ color: '#ff4d4f', fontWeight: 500 }}>二维码已过期</p>
+          <Button type="primary" loading={loading} onClick={startLogin} style={{ marginTop: 8 }}>
+            重新获取二维码
+          </Button>
         </div>
-        <div style={{ display: 'flex', justifyContent: 'flex-end', marginTop: 16 }}>
-          <Button style={{ background: '#722ed1', borderColor: '#722ed1', color: '#fff' }}>保存凭证</Button>
+      )}
+
+      {/* Connected info */}
+      {loginStatus === 'confirmed' && (
+        <div style={{ fontSize: 12, color: '#00000073', lineHeight: 1.8, padding: '0 4px' }}>
+          <p>✅ Vera 已连接到微信</p>
+          <p>💬 在微信中给绑定的 Bot 发消息即可使用</p>
+          <p>🔄 每用户自动创建独立会话，上下文保持</p>
+          <p>📎 支持文本消息（图片/语音暂不支持）</p>
         </div>
-      </div>
-      {/* Bindings */}
-      <div style={{ border: '1px solid #d9d9d9', borderRadius: 8, padding: 16 }}>
-        <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 16 }}>
-          <div style={{ width: 32, height: 32, borderRadius: '50%', background: '#1f1f1f', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 14 }}>3</div>
-          <div><span style={{ fontWeight: 500 }}>绑定群聊</span> <Tag color="green" style={{ fontSize: 10 }}>已绑定</Tag></div>
-        </div>
-        <div style={{ border: '1px solid #d9d9d9', borderRadius: 8, padding: 16, marginBottom: 12 }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 8 }}>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-              <TeamOutlined style={{ color: '#722ed1' }} />
-              <span style={{ fontWeight: 500, fontSize: 14 }}>客服 VOC 反馈群</span>
-            </div>
-            <div style={{ display: 'flex', gap: 8 }}>
-              <Button size="small" type="primary" ghost>修改</Button>
-              <Button size="small" danger>删除</Button>
-            </div>
-          </div>
-          <div style={{ fontSize: 12, color: '#00000073' }}><span style={{ fontWeight: 500 }}>ChatID:</span> wr3JFUoAeAQwQXJFUaoGEw</div>
-        </div>
-        <Button type="dashed" block icon={<PlusOutlined />}>添加群聊</Button>
-      </div>
+      )}
     </FormCard>
   );
 }
+
+// Backwards-compatible alias
+const WeComPanel = WeChatPanel;
 
 // ═══ Utility Components ══════════════════════════
 

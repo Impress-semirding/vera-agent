@@ -15,8 +15,17 @@ fully separate.
 
 from __future__ import annotations
 
+import logging
 import os
 from contextlib import asynccontextmanager
+
+# Ensure WeChat iLink logs are visible at INFO level
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(name)s] %(levelname)s %(message)s",
+    datefmt="%H:%M:%S",
+)
+logging.getLogger("wechat").setLevel(logging.INFO)
 
 import uvicorn
 from fastapi import FastAPI
@@ -39,6 +48,7 @@ from api.routers import (
     session_settings,
     sessions,
     skills,
+    wechat,
     wecom,
 )
 
@@ -51,7 +61,24 @@ async def lifespan(_: FastAPI):
     await init_db()
     async with async_session() as db:
         await seed(db)
+
+    # Restore WeChat iLink monitors for agents with confirmed WeChat
+    try:
+        from api.routers.wechat import _restore_all_monitors
+        await _restore_all_monitors()
+    except Exception:
+        import logging
+        logging.getLogger("main").exception("Failed to restore WeChat monitors")
+
     yield
+
+    # Shutdown: stop all WeChat monitors
+    try:
+        from agent_runtime.wechat.monitor import stop_all_monitors
+        await stop_all_monitors()
+    except Exception:
+        import logging
+        logging.getLogger("main").exception("Failed to stop WeChat monitors")
 
 
 app = FastAPI(
@@ -84,6 +111,7 @@ for _router in (
     model_configs.router,
     permissions.router,
     push.router,
+    wechat.router,
     wecom.router,
     session_settings.router,
     config_files.router,
