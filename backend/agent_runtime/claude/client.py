@@ -50,7 +50,7 @@ class ClaudeAgentClient:
         """Spawn claude-runner.py and send initial config."""
         self.cwd = config.cwd
         runner_script = os.path.join(
-            os.path.dirname(os.path.abspath(__file__)),
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
             "runner.py",
         )
         self._process = await asyncio.create_subprocess_exec(
@@ -66,6 +66,7 @@ class ClaudeAgentClient:
         # Send start config
         await self._send({
             "type": "start",
+            "mode": "claude",
             "apiKey": config.api_key,
             "baseUrl": config.base_url,
             "model": config.model,
@@ -157,7 +158,8 @@ class ClaudeAgentClient:
                 line = await self._process.stderr.readline()
                 if not line:
                     return
-                print(f"[claude-runner] {line.decode('utf-8', errors='replace').rstrip()}", flush=True)
+                sys.stderr.write(f"[claude-runner] {line.decode('utf-8', errors='replace').rstrip()}\n")
+                sys.stderr.flush()
         except asyncio.CancelledError:
             return
         except Exception:
