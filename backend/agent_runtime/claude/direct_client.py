@@ -107,23 +107,28 @@ class DirectClaudeAgentClient:
                     sc["headers"] = srv["headers"]
                 mcp_servers[name] = sc
 
-        options = ClaudeAgentOptions(
-            model=cfg.model,
-            max_turns=cfg.max_turns,
-            allowed_tools=cfg.allowed_tools,
-            cwd=cfg.cwd or None,
-            permission_mode="bypassPermissions",
-            mcp_servers=mcp_servers,
-            cli_path=cli_path,
-            stderr=_on_cli_stderr,
-        )
-
         os.environ.setdefault("CLAUDE_CODE_DISABLE_NON_ESSENTIAL_TTY", "1")
         os.environ.setdefault("CLAUDE_CODE_HEADLESS", "1")
         os.environ["ANTHROPIC_API_KEY"] = cfg.api_key
         os.environ["ANTHROPIC_BASE_URL"] = cfg.base_url
 
+        def _make_options(rid: str | None = None) -> ClaudeAgentOptions:
+            opts = ClaudeAgentOptions(
+                model=cfg.model,
+                max_turns=cfg.max_turns,
+                allowed_tools=cfg.allowed_tools,
+                cwd=cfg.cwd or None,
+                permission_mode="bypassPermissions",
+                mcp_servers=mcp_servers,
+                cli_path=cli_path,
+                stderr=_on_cli_stderr,
+            )
+            if rid:
+                opts.resume = rid
+            return opts
+
         session_id: str | None = None
+        turn_final_emitted: bool = False
 
         async def handle(msg) -> None:
             nonlocal session_id
@@ -133,7 +138,9 @@ class DirectClaudeAgentClient:
                 if hasattr(msg, "subtype") and msg.subtype == "init":
                     data = getattr(msg, "data", {}) or {}
                     if isinstance(data, dict):
-                        session_id = data.get("session_id", session_id)
+                        sid = data.get("session_id")
+                        if sid and not session_id:
+                            session_id = sid  # only capture first init, don't overwrite
                 return
 
             if mt == "StreamEvent":
@@ -175,6 +182,8 @@ class DirectClaudeAgentClient:
                 return
 
             if mt == "ResultMessage":
+                nonlocal turn_final_emitted
+                turn_final_emitted = True
                 result = getattr(msg, "result", "") or ""
                 content = result if isinstance(result, str) else str(result)
                 await self._event_queue.put({
@@ -251,14 +260,12 @@ class DirectClaudeAgentClient:
                     "text": f"→ 模型: {cfg.model}",
                 })
 
-                if session_id:
-                    options.resume = session_id
-
-                async for msg in query(prompt=text, options=options):
+                turn_final_emitted = False
+                async for msg in query(prompt=text, options=_make_options(session_id)):
                     await handle(msg)
 
-                # Ensure model_final is always emitted
-                await self._event_queue.put({"type": "model_final", "content": "", "reasoningContent": ""})
+                if not turn_final_emitted:
+                    await self._event_queue.put({"type": "model_final", "content": "", "reasoningContent": ""})
         except asyncio.CancelledError:
             pass
         except Exception:
