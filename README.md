@@ -2,6 +2,11 @@
 
 高度可扩展的智能 Agent 构建与编排平台，打破单一 AI 工具的边界。通过深度集成官方 Claude Agent SDK 与灵活的自建 Agent 架构，为开发者提供从"开箱即用"到"深度定制"的完整解决方案。
 
+## demo
+![alt text](image.png)
+
+![alt text](image-1.png)
+
 ## ✨ 核心特性
 
 - **双引擎驱动架构** — 原生支持 Claude Agent SDK，一键接入代码理解、文件读写与命令执行能力；同时提供自建 Agent 接口，允许通过 MCP 协议或自定义 Python/Node.js 脚本扩展专属工具链。
@@ -55,10 +60,40 @@ pip install -e .
 
 # Claude 模式需要额外安装 SDK
 pip install claude-agent-sdk
-
-# 启动
-uvicorn api.main:app --host 127.0.0.1 --port 18080 --reload
 ```
+
+#### Docker 安装
+
+```bash
+# macOS
+brew install --cask docker
+
+# Linux
+curl -fsSL https://get.docker.com | sh
+```
+
+#### 本地子进程模式（无需 Docker）
+
+```bash
+AGENT_USE_DOCKER=0 uvicorn api.main:app --host 127.0.0.1 --port 18080 --reload
+```
+
+#### Docker 隔离模式（推荐生产环境）
+
+首次启动自动构建镜像，之后复用。
+
+```bash
+AGENT_USE_DOCKER=1 uvicorn api.main:app --host 127.0.0.1 --port 18080 --reload
+```
+
+配置项：
+
+| 环境变量 | 默认值 | 说明 |
+|---------|--------|------|
+| `AGENT_USE_DOCKER` | `1` | `1`=Docker 容器隔离，`0`=本地子进程 |
+| `AGENT_MAX_CONTAINERS` | `5` | 最大并发容器数 |
+| `AGENT_IDLE_TIMEOUT` | `1800` | 容器空闲超时秒数（默认 30 分钟） |
+| `AGENT_WORKSPACE_BASE` | 项目 `data/workspaces/` | Agent 工作区根目录 |
 
 - API: `http://127.0.0.1:18080/api/v1` · Docs: `http://127.0.0.1:18080/docs`
 - 首次运行自动创建 SQLite 数据库并初始化种子数据
