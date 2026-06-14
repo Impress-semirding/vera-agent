@@ -156,6 +156,10 @@ export default function EditAgentPage() {
   const handleSessionCreated = useCallback(
     (id: string) => {
       if (agentId) navigate(`/chat/${agentId}/${id}`, { replace: true });
+      // Refresh session list
+      sessionService.list(agentId!).then((res) => {
+        setSessions((res.data ?? []).map((s) => ({ id: s.id, name: s.name })));
+      }).catch(() => {});
     },
     [agentId, navigate],
   );
@@ -643,7 +647,7 @@ function ArtifactSidebar({ tab, artifacts, onTabChange, onClose }: {
       .catch(() => {});
   }, [sessionId, tab, artifacts]);
 
-  const downloadUrl = (path: string) => `/api/v1/files/${sessionId}/download?path=${encodeURIComponent(path)}`;
+  const downloadUrl = (path: string) => `/api/v1/files/${sessionId}/download?path=${encodeURIComponent(path)}&user=admin`;
 
   // Resizable sidebar
   const [sideWidth, setSideWidth] = useState(420);
@@ -1022,7 +1026,7 @@ function ThinkingBlock({ items, pending }: { items: Segment[]; pending?: boolean
 }
 
 /** Single thinking step — individually collapsible, bordered card */
-function ReasoningStep({ text, isLast, pending, source }: { text: string; isLast: boolean; pending?: boolean; source?: 'reasoning' | 'content' }) {
+function ReasoningStep({ text, pending, source }: { text: string; isLast?: boolean; pending?: boolean; source?: 'reasoning' | 'content' }) {
   const [collapsed, setCollapsed] = useState(true);
   if (!text && !pending) return null;
   const isThinking = source === 'reasoning' || !source;
@@ -1127,7 +1131,7 @@ function ToolCard({ segment }: { segment: Extract<Segment, { kind: 'tool' }> }) 
 }
 
 /** Main content text — Markdown with ECharts support */
-function TextSegment({ text, pending }: { text: string; pending?: boolean }) {
+function TextSegment({ text }: { text: string; pending?: boolean }) {
   return (
     <div style={{
       padding: '6px 16px', borderRadius: 12, fontSize: 14, lineHeight: 1.6,

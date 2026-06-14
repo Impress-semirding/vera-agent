@@ -50,7 +50,7 @@ router = APIRouter(tags=["chat"])
 
 DEFAULT_USER = "current-user"
 _PING_INTERVAL = 30
-_IDLE_TIMEOUT = 60
+_IDLE_TIMEOUT = 180  # 3 minutes — close only if BOTH client and agent are silent
 _SHUTDOWN = None
 
 
@@ -116,7 +116,7 @@ async def chat_websocket(ws: WebSocket, agent_id: str, session_id: str) -> None:
             _session_worker(
                 session_id=resolved_session_id,
                 model=agent_model,
-                mode=agent.mode,  # "claude" or "normal"
+                mode=agent.mode,
                 agent_id=agent_id,
                 user=user,
                 model_config=model_config,
@@ -149,7 +149,10 @@ async def chat_websocket(ws: WebSocket, agent_id: str, session_id: str) -> None:
                 try:
                     frame = await asyncio.wait_for(ws.receive_json(), timeout=_IDLE_TIMEOUT)
                 except asyncio.TimeoutError:
-                    return
+                    # Only close if agent is idle — don't kill during long turns
+                    if worker_task.done():
+                        return
+                    continue  # agent busy, reset timer
                 except WebSocketDisconnect:
                     return
                 except Exception:
@@ -185,6 +188,7 @@ async def chat_websocket(ws: WebSocket, agent_id: str, session_id: str) -> None:
                     await worker_task
                 except (asyncio.CancelledError, Exception):
                     pass
+
 
     except WebSocketDisconnect:
         return
@@ -283,7 +287,8 @@ async def _process_turn(
     try:
         await adapter.send(text)
     except Exception as exc:
-        _try_push(ws_holder, {"type": "error", "message": f"Agent 启动失败: {exc}"})
+        import traceback
+        _try_push(ws_holder, {"type": "error", "message": f"Agent 启动失败: {exc}\n{traceback.format_exc()}"})
         return False
 
     # ── Mock tool events for frontend debugging ──
@@ -327,13 +332,16 @@ async def _process_turn(
             elif event_type == "model_final":
                 final_content = event.get("content", "")
                 final_reasoning = event.get("reasoningContent", "")
+                assembled = "".join(content_parts)
                 if final_content:
                     _push_seg({"kind": "text", "text": final_content})
+                elif assembled:
+                    _push_seg({"kind": "text", "text": assembled})
                 _try_push(ws_holder, {**event, "turnId": turn_id})
                 duration_ms = int(time.time() * 1000) - turn_start_ms
                 await _persist_message(
                     session_id, "assistant",
-                    final_content or "".join(content_parts),
+                    final_content or assembled,
                     final_reasoning or "".join(reasoning_parts),
                     tool_calls=tool_calls if tool_calls else None,
                     segments=segments if segments else None,
@@ -374,7 +382,8 @@ async def _process_turn(
                 error_msg = event.get("message", "未知错误")
                 _try_push(ws_holder, {**event, "turnId": turn_id})
 
-    except Exception:
+    except Exception as exc:
+        import traceback
         # Subprocess was killed (abort or unexpected error) — persist partial response
         if content_parts or reasoning_parts:
             await _persist_message(
@@ -383,7 +392,8 @@ async def _process_turn(
                 "".join(reasoning_parts),
             )
         # Notify frontend so streaming state doesn't get stuck
-        _try_push(ws_holder, {"type": "error", "message": "处理中断"})
+        _try_push(ws_holder, {"type": "error", "message": f"处理中断: {exc}"})
+        _try_push(ws_holder, {"type": "model_final", "content": "", "reasoningContent": ""})
         return False
 
     if error_msg and not content_parts:

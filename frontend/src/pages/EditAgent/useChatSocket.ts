@@ -6,7 +6,7 @@ import { getUserName } from '@/services/authUser';
 // ─── Segment model ─────────────────────────────────
 
 export type Segment =
-  | { kind: 'reasoning'; text: string; source?: 'reasoning' | 'content' }
+  | { kind: 'reasoning'; text: string; source?: 'reasoning' | 'content'; step?: number }
   | { kind: 'text'; text: string }
   | { kind: 'tool'; callId: string; name: string; args: string; output?: string; ok?: boolean; done: boolean };
 
@@ -222,15 +222,30 @@ export function useChatSocket(
             } else {
               // Both reasoning and content deltas go into the thinking block.
               // Only model_final creates the final visible text segment.
+              const step = data?.step;
               const kind = channel === 'reasoning' || channel === 'content' ? 'reasoning' : 'text';
-              const { segments: updated, index: si } = upsertSegment(segs, kind);
-              const seg = { ...updated[si] } as Extract<Segment, { kind: 'reasoning' | 'text' }>;
-              seg.text = seg.text + text;
-              if (kind === 'reasoning') {
-                (seg as Extract<Segment, { kind: 'reasoning' }>).source = channel === 'content' ? 'content' : 'reasoning';
+              if (kind === 'reasoning' && step != null) {
+                // Merge by step: same step → append to existing, new step → create new
+                const lastSeg = segs.length > 0 ? segs[segs.length - 1] : null;
+                const merged = [...segs];
+                if (lastSeg?.kind === 'reasoning' && (lastSeg as any).step === step) {
+                  const seg = { ...lastSeg } as Extract<Segment, { kind: 'reasoning' }>;
+                  seg.text = seg.text + text;
+                  merged[merged.length - 1] = seg;
+                } else {
+                  merged.push({ kind: 'reasoning', text, source: channel === 'content' ? 'content' : 'reasoning', step } as Segment);
+                }
+                next[idx] = { ...next[idx], segments: merged } as ChatMsg;
+              } else {
+                const { segments: updated, index: si } = upsertSegment(segs, kind);
+                const seg = { ...updated[si] } as Extract<Segment, { kind: 'reasoning' | 'text' }>;
+                seg.text = seg.text + text;
+                if (kind === 'reasoning') {
+                  (seg as Extract<Segment, { kind: 'reasoning' }>).source = channel === 'content' ? 'content' : 'reasoning';
+                }
+                updated[si] = seg;
+                next[idx] = { ...next[idx], segments: updated } as ChatMsg;
               }
-              updated[si] = seg;
-              next[idx] = { ...next[idx], segments: updated } as ChatMsg;
             }
           }
           return next;
@@ -358,7 +373,13 @@ export function useChatSocket(
             };
             // Use persisted segments if available
             if (m.role === 'assistant' && m.segments && m.segments.length > 0) {
-              msg.segments = m.segments as Segment[];
+              const segs = m.segments as Segment[];
+              // Fallback: if no text segment, append one from content
+              const hasText = segs.some(s => s.kind === 'text');
+              if (!hasText && m.content) {
+                segs.push({ kind: 'text', text: m.content });
+              }
+              msg.segments = segs;
             }
             return msg;
           }),
