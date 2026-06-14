@@ -23,6 +23,7 @@ import { sessionService } from '@/services/sessionService';
 import type { Agent } from '@/types/agent';
 import { useChatSocket } from './useChatSocket';
 import type { ChatMsg, Segment } from './useChatSocket';
+import { getUserName } from '@/services/authUser';
 import ConfigNav from './sidebar/ConfigNav';
 import SessionList from './sidebar/SessionList';
 import BasicInfoPanel from './panels/BasicInfoPanel';
@@ -156,7 +157,12 @@ export default function EditAgentPage() {
   const handleSessionCreated = useCallback(
     (id: string) => {
       if (agentId) navigate(`/chat/${agentId}/${id}`, { replace: true });
-      // Refresh session list
+      // Optimistic update: add new session immediately
+      setSessions(prev => {
+        if (prev.some(s => s.id === id)) return prev;
+        return [...prev, { id, name: '新会话' }];
+      });
+      // Then refresh from API
       sessionService.list(agentId!).then((res) => {
         setSessions((res.data ?? []).map((s) => ({ id: s.id, name: s.name })));
       }).catch(() => {});
@@ -171,7 +177,7 @@ export default function EditAgentPage() {
 
   const handleResetContext = useCallback(() => {
     if (!sessionId) return;
-    fetch(`/api/v1/sessions/${sessionId}/reset-context?user=admin`, { method: 'POST' })
+    fetch(`/api/v1/sessions/${sessionId}/reset-context?user=${encodeURIComponent(getUserName() ?? '')}`, { method: 'POST' })
       .then(() => {
         stop();  // kill current Claude client so next msg starts fresh
         message.success('上下文已重置');
@@ -641,13 +647,13 @@ function ArtifactSidebar({ tab, artifacts, onTabChange, onClose }: {
   // Fetch file list from API on open
   useEffect(() => {
     if (!sessionId || tab !== 'file') return;
-    fetch(`/api/v1/files/${sessionId}?user=admin`)
+    fetch(`/api/v1/files/${sessionId}?user=${encodeURIComponent(getUserName() ?? '')}`)
       .then(r => r.json())
       .then(data => { if (Array.isArray(data)) setFiles(data); })
       .catch(() => {});
   }, [sessionId, tab, artifacts]);
 
-  const downloadUrl = (path: string) => `/api/v1/files/${sessionId}/download?path=${encodeURIComponent(path)}&user=admin`;
+  const downloadUrl = (path: string) => `/api/v1/files/${sessionId}/download?path=${encodeURIComponent(path)}&user=${encodeURIComponent(getUserName() ?? '')}`;
 
   // Resizable sidebar
   const [sideWidth, setSideWidth] = useState(420);
