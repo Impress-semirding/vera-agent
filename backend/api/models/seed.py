@@ -8,9 +8,11 @@ from api.util import hash_password
 # Dev login account. Seeded only when the users table is empty.
 _SEED_USERS = [
     ("admin", "admin@zhongan.com"),
+    ("demo", "demo@example.com"),
 ]
 _SEED_USER_PASSWORDS = {
     "admin": "123456",
+    "demo": "123456",
 }
 
 

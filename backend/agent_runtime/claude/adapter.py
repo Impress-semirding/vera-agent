@@ -24,9 +24,12 @@ class ClaudeAgentAdapter(AgentAdapter):
         )
 
         if os.environ.get("AGENT_USE_DOCKER", "1") == "1":
-            from agent_runtime.claude.container_pool import get_container_pool
+            from agent_runtime.claude.container_pool import get_container_pool, PoolFullError
             pool = get_container_pool()
-            client, is_new = await pool.acquire(self.session_id)
+            try:
+                client, is_new = await pool.acquire(self.session_id)
+            except PoolFullError:
+                raise PoolFullError("请求人数太多，请稍后重试")
             if is_new or not client.is_alive():
                 await client.start(config)
             elif client._session_id != self.session_id:
@@ -43,8 +46,11 @@ class ClaudeAgentAdapter(AgentAdapter):
 
     async def close(self) -> None:
         if self._pool_client is not None:
-            from agent_runtime.claude.container_pool import get_container_pool
-            await get_container_pool().release(self._pool_client)
+            # Kill container on close — don't leave stale agent running
+            try:
+                await self._pool_client.close()
+            except Exception:
+                pass
             self._pool_client = None
             self._client = None
         await super().close()

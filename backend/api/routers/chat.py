@@ -53,14 +53,19 @@ _PING_INTERVAL = 30
 _IDLE_TIMEOUT = 180  # 3 minutes — close only if BOTH client and agent are silent
 _SHUTDOWN = None
 
+# Track active WS per session — new connection kicks old one out
+_session_ws: dict[str, WebSocket] = {}
+
 
 @router.websocket("/chat/{agent_id}/{session_id}")
 async def chat_websocket(ws: WebSocket, agent_id: str, session_id: str) -> None:
     await ws.accept()
     user = ws.query_params.get("user") or DEFAULT_USER
 
+    # Kick old connection for the same session (only one active WS per session)
     ws_holder: list[WebSocket | None] = [ws]
     llm_holder: list[LLMClient | None] = [None]
+    session_key: str | None = None
 
     try:
         # ─── 1. validate agent + ownership ───────────────────────────────────
@@ -104,6 +109,16 @@ async def chat_websocket(ws: WebSocket, agent_id: str, session_id: str) -> None:
             ).scalar_one_or_none()
 
         # ─── 3. ready ────────────────────────────────────────────────────────
+        # Kick old connection for the same resolved session (one WS per session)
+        session_key = f"{agent_id}/{resolved_session_id}"
+        old_ws = _session_ws.get(session_key)
+        if old_ws:
+            try:
+                await old_ws.close(code=4001, reason="new connection")
+            except Exception:
+                pass
+        _session_ws[session_key] = ws
+
         await ws.send_json({
             "type": "ready",
             "sessionId": resolved_session_id,
@@ -199,6 +214,8 @@ async def chat_websocket(ws: WebSocket, agent_id: str, session_id: str) -> None:
             pass
     finally:
         ws_holder[0] = None
+        if session_key:
+            _session_ws.pop(session_key, None)
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -382,6 +399,16 @@ async def _process_turn(
                 error_msg = event.get("message", "未知错误")
                 _try_push(ws_holder, {**event, "turnId": turn_id})
 
+    except asyncio.CancelledError:
+        # Worker cancelled (WS disconnect, server shutdown) — persist partial
+        if content_parts or reasoning_parts:
+            await _persist_message(
+                session_id, "assistant",
+                "".join(content_parts),
+                "".join(reasoning_parts),
+            )
+        _try_push(ws_holder, {"type": "model_final", "content": "", "reasoningContent": ""})
+        raise  # re-raise to let worker handle cancellation properly
     except Exception as exc:
         import traceback
         # Subprocess was killed (abort or unexpected error) — persist partial response

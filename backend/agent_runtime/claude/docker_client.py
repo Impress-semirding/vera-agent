@@ -125,6 +125,8 @@ class DockerAgentClient:
             raise RuntimeError(f"Agent runner did not start: {ready}")
 
     async def send(self, text: str) -> None:
+        if not self.is_alive():
+            raise RuntimeError("Container not running")
         await self._send({"type": "user_input", "text": text})
 
     async def read_deltas(self) -> AsyncIterator[dict]:

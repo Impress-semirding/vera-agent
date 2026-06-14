@@ -16,6 +16,11 @@ from dataclasses import dataclass, field
 from agent_runtime.claude.docker_client import DockerAgentClient
 
 
+class PoolFullError(Exception):
+    """Raised when the container pool is at capacity."""
+    pass
+
+
 @dataclass
 class PooledContainer:
     client: DockerAgentClient
@@ -89,13 +94,15 @@ class ContainerPool:
                 client = DockerAgentClient()
                 client._session_id = session_id
                 self._containers.append(PooledContainer(
-                    client=client, session_id=session_id,
+                    client=client, session_id=session_id, busy=True,
                 ))
                 return client, True
 
-        # 4. Pool full — wait
-        while True:
+        # 4. Pool full — wait with timeout
+        waited = 0
+        while waited < 120:  # max 2 minutes
             await asyncio.sleep(1)
+            waited += 1
             async with self._lock:
                 for c in self._containers:
                     if not c.busy:
@@ -104,6 +111,7 @@ class ContainerPool:
                         c.busy = True
                         c.last_used = time.time()
                         return c.client, False
+        raise PoolFullError("请求人数太多，请稍后重试")
 
     async def release(self, client: DockerAgentClient) -> None:
         """Mark a container as idle (available for reuse)."""
