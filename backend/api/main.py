@@ -15,6 +15,10 @@ fully separate.
 
 from __future__ import annotations
 
+# Load .env before any other code reads os.environ
+from dotenv import load_dotenv
+load_dotenv()
+
 import logging
 import os
 from contextlib import asynccontextmanager

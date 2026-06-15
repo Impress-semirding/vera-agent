@@ -41,22 +41,26 @@ async def _get_session(db: AsyncSession, session_id: str) -> M.Session:
 
 @router.get("/agents/{agent_id}/sessions")
 async def list_sessions(agent_id: str, db: AsyncSession = Depends(get_db)):
-    sessions = (
-        await db.execute(select(M.Session).where(M.Session.agent_id == agent_id).order_by(M.Session.created_at.desc()))
-    ).scalars().all()
-
-    # Last-message timestamp per session in a single grouped query.
-    last_map: dict[str, object] = {}
-    if sessions:
-        ids = [s.id for s in sessions]
-        rows = (
-            await db.execute(
-                select(M.Message.session_id, func.max(M.Message.created_at))
-                .where(M.Message.session_id.in_(ids))
-                .group_by(M.Message.session_id)
+    # Join with last message timestamp for sorting.  Sessions with no messages
+    # fall back to created_at, so newly-created sessions still appear at top.
+    rows = (
+        await db.execute(
+            select(
+                M.Session,
+                func.coalesce(func.max(M.Message.created_at), M.Session.created_at).label("last_activity"),
             )
-        ).all()
-        last_map = {sid: ts for sid, ts in rows}
+            .outerjoin(M.Message, M.Message.session_id == M.Session.id)
+            .where(M.Session.agent_id == agent_id)
+            .group_by(M.Session.id)
+            .order_by(func.coalesce(func.max(M.Message.created_at), M.Session.created_at).desc())
+        )
+    ).all()
+
+    sessions = []
+    last_map: dict[str, object] = {}
+    for s, last_activity in rows:
+        sessions.append(s)
+        last_map[s.id] = last_activity if last_activity != s.created_at else None
 
     return ok([_session_out(s, last_map.get(s.id)) for s in sessions])
 

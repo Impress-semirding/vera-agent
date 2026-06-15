@@ -135,14 +135,15 @@ async def build_claude_config(
 def _sync_workspace(cwd: str, claude_md: str, skills: list[dict]) -> None:
     """Create workspace and write CLAUDE.md + skills to disk.
 
-    Skill names are sanitized to prevent path traversal.
+    Only writes CLAUDE.md if the user has configured content (i.e.
+    ``config.claude_md`` is non-empty from the DB).  System-level
+    constraints are passed separately to the runner, not in this file.
     """
     import re
     os.makedirs(cwd, exist_ok=True)
     os.makedirs(os.path.join(cwd, "output"), exist_ok=True)
-    # Append system-level constraints (applies to ALL Claude agents, not per-agent config)
-    claude_md = (claude_md or "") + _GLOBAL_CONSTRAINTS
-    if claude_md.strip():
+    # Only write if user actually configured a CLAUDE.md
+    if claude_md and claude_md.strip():
         _write_file(os.path.join(cwd, "CLAUDE.md"), claude_md)
     for s in skills:
         safe_name = re.sub(r'[^a-zA-Z0-9_.-]', '_', s["name"])

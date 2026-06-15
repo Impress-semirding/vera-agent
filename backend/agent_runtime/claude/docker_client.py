@@ -16,13 +16,16 @@ from typing import AsyncIterator
 from agent_runtime.claude.client import ClaudeAgentConfig
 
 
+def _get_image_name() -> str:
+    """Docker image name from env, defaults to vera-agent-runner:latest."""
+    return os.environ.get("AGENT_DOCKER_IMAGE", "vera-agent-runner:latest")
+
+
 class DockerAgentClient:
     """Spawns a Docker container and communicates via stdin/stdout JSON lines.
 
     Same public interface as LLMClient / ClaudeAgentClient.
     """
-
-    IMAGE_NAME = "vera-agent-runner:latest"
 
     def __init__(self) -> None:
         self._process: asyncio.subprocess.Process | None = None
@@ -35,35 +38,44 @@ class DockerAgentClient:
 
     @classmethod
     async def ensure_image(cls) -> None:
-        """Check if Docker image exists, build only if missing."""
-        # Check if image exists
-        proc = await asyncio.create_subprocess_exec(
-            "docker", "image", "inspect", cls.IMAGE_NAME,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-        )
-        stdout, stderr = await proc.communicate()
-        if proc.returncode == 0:
-            print(f"[docker] Image {cls.IMAGE_NAME} exists, skip build", flush=True)
-            return
+        """Verify Docker is accessible and the image exists.  Fail fast if not.
 
-        # Image doesn't exist
-        print(f"[docker] Image {cls.IMAGE_NAME} NOT FOUND (stdout={stdout.decode()[:100]!r} stderr={stderr.decode()[:100]!r}), building...", flush=True)
-
+        The image must be pre-built once with ``docker build``. We never build
+        at runtime — that keeps startup predictable and avoids multi-minute
+        delays on first request.
+        """
         docker_dir = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "docker"
         )
+        # 1. Check Docker daemon is reachable
         proc = await asyncio.create_subprocess_exec(
-            "docker", "build", "-t", cls.IMAGE_NAME, docker_dir,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT,
+            "docker", "info",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL,
         )
-        if proc.stdout:
-            async for line in proc.stdout:
-                print(f"[docker-build] {line.decode().rstrip()}", flush=True)
         rc = await proc.wait()
         if rc != 0:
-            raise RuntimeError(f"Docker build failed with exit code {rc}")
+            raise RuntimeError(
+                "Docker daemon is not accessible. Make sure Docker Desktop "
+                "is running and the socket is available."
+            )
+
+        # 2. Check image exists
+        proc = await asyncio.create_subprocess_exec(
+            "docker", "images", "-q", _get_image_name(),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+        )
+        stdout, _ = await proc.communicate()
+        if stdout.decode().strip():
+            print(f"[docker] Image {_get_image_name()} found", flush=True)
+            return
+
+        raise RuntimeError(
+            f"Docker image '{_get_image_name()}' not found.\n"
+            f"Build it once with:\n"
+            f"  docker build -t {_get_image_name()} {docker_dir}"
+        )
 
     # ─── Public API ───────────────────────────────────────────────────
 
@@ -91,7 +103,7 @@ class DockerAgentClient:
             "-e", "CLAUDE_CODE_HEADLESS=1",
             # Network
             "--network", "host" if sys.platform == "linux" else "bridge",
-            self.IMAGE_NAME,
+            _get_image_name(),
         ]
 
         self._process = await asyncio.create_subprocess_exec(

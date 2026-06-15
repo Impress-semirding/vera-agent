@@ -53,8 +53,54 @@ _PING_INTERVAL = 30
 _IDLE_TIMEOUT = 180  # 3 minutes — close only if BOTH client and agent are silent
 _SHUTDOWN = None
 
-# Track active WS per session — new connection kicks old one out
-_session_ws: dict[str, WebSocket] = {}
+# Track active WS per session — strict single-connection enforcement.
+# Value is (websocket, ws_holder) tuple.
+# When a connection is replaced, the old connection's release_event
+# (stored in a closure/local) signals when its resources are freed.
+_session_ws: dict[str, tuple[WebSocket, list[WebSocket | None]]] = {}
+
+# ── User-level concurrency control ─────────────────────────────────
+# Per-user semaphore caps concurrent turn processing across all sessions.
+# Key = user name, Value = asyncio.Semaphore
+_user_semaphores: dict[str, asyncio.Semaphore] = {}
+
+# Map session_key → user name (for cleanup on disconnect).
+_session_user: dict[str, str] = {}
+
+# Per-session mutex — defence-in-depth against concurrent turn processing
+# within the same session (in case single-connection enforcement has a
+# race window).  Key = session_key.
+_session_locks: dict[str, asyncio.Lock] = {}
+
+
+def _get_session_lock(session_key: str) -> asyncio.Lock:
+    """Get or create the per-session mutex."""
+    lock = _session_locks.get(session_key)
+    if lock is None:
+        lock = asyncio.Lock()
+        _session_locks[session_key] = lock
+    return lock
+
+
+def _get_max_turns() -> int:
+    """Max concurrent turns per user, from env or default 3."""
+    import os
+    return int(os.environ.get("AGENT_MAX_CONCURRENT_TURNS", "3"))
+
+
+def _get_max_sessions() -> int:
+    """Max active WS sessions per user, from env or default 5."""
+    import os
+    return int(os.environ.get("AGENT_MAX_SESSIONS", "5"))
+
+
+def _get_user_sem(user: str) -> asyncio.Semaphore:
+    """Get or lazily create the per-user turn semaphore."""
+    sem = _user_semaphores.get(user)
+    if sem is None:
+        sem = asyncio.Semaphore(_get_max_turns())
+        _user_semaphores[user] = sem
+    return sem
 
 
 @router.websocket("/chat/{agent_id}/{session_id}")
@@ -108,16 +154,83 @@ async def chat_websocket(ws: WebSocket, agent_id: str, session_id: str) -> None:
                 )
             ).scalar_one_or_none()
 
-        # ─── 3. ready ────────────────────────────────────────────────────────
-        # Kick old connection for the same resolved session (one WS per session)
+        # ─── 3. ready — single-connection per session (backend enforced) ──────
         session_key = f"{agent_id}/{resolved_session_id}"
-        old_ws = _session_ws.get(session_key)
-        if old_ws:
+        existing = _session_ws.get(session_key)
+        if existing is not None:
+            existing_ws, existing_holder = existing
+            # Create a release event that the OLD connection's finally block
+            # will signal when its resources (adapter, container) are freed.
+            old_released: asyncio.Event = asyncio.Event()
+            # Stash it on the old holder so the old finally can find it.
+            # We use a sentinel key in the holder list: holder[1] = release_event
+            existing_holder.append(old_released)  # type: ignore[arg-type]
+
+            # Kill the old connection
+            existing_holder[0] = None
             try:
-                await old_ws.close(code=4001, reason="new connection")
+                await existing_ws.close(code=4001, reason="replaced by new connection")
             except Exception:
                 pass
-        _session_ws[session_key] = ws
+
+            # Wait for old worker to finish cleanup (adapter closed, container gone)
+            try:
+                await asyncio.wait_for(old_released.wait(), timeout=10)
+            except asyncio.TimeoutError:
+                pass
+
+            _session_ws.pop(session_key, None)
+
+        _session_ws[session_key] = (ws, ws_holder)
+
+        # ── Check per-user session limit ───────────────────────────────
+        max_sessions = _get_max_sessions()
+        _session_user[session_key] = user
+        current_sessions = sum(1 for sk, u in _session_user.items()
+                               if u == user and sk.startswith(f"{agent_id}/"))
+        if current_sessions > max_sessions:
+            # Don't force-close — send a friendly prompt and let the user
+            # decide.  Poll until a slot frees or the user disconnects.
+            await ws.send_json({
+                "type": "session_limit",
+                "message": f"已达上限 ({max_sessions}个会话)，请关闭其他标签页后等待自动重连",
+                "maxSessions": max_sessions,
+                "currentSessions": current_sessions,
+            })
+            # Remove from tracking so we don't count this waiting WS as active
+            _session_ws.pop(session_key, None)
+            _session_user.pop(session_key, None)
+            # Wait loop: poll every 5s until a slot frees or user leaves
+            try:
+                while True:
+                    await asyncio.sleep(5)
+                    count = sum(1 for sk, u in _session_user.items()
+                               if u == user and sk.startswith(f"{agent_id}/"))
+                    if count < max_sessions:
+                        # Slot freed — but check if another WS for the same
+                        # session already connected while we were waiting
+                        if _session_ws.get(session_key) is not None:
+                            # Another connection took this session — we're
+                            # no longer needed
+                            await ws.send_json({
+                                "type": "session_limit",
+                                "message": "该会话已被其他连接接管，请关闭此标签页",
+                            })
+                            return
+                        _session_ws[session_key] = (ws, ws_holder)
+                        _session_user[session_key] = user
+                        await ws.send_json({
+                            "type": "session_resume",
+                            "message": "会话槽位已释放，正在连接...",
+                        })
+                        break
+                    # Keep-alive ping so the frontend knows we're still waiting
+                    try:
+                        await ws.send_json({"type": "session_waiting", "message": f"等待中 ({count}/{max_sessions})..."})
+                    except Exception:
+                        return  # user disconnected
+            except Exception:
+                return  # user disconnected or error
 
         await ws.send_json({
             "type": "ready",
@@ -215,7 +328,18 @@ async def chat_websocket(ws: WebSocket, agent_id: str, session_id: str) -> None:
     finally:
         ws_holder[0] = None
         if session_key:
-            _session_ws.pop(session_key, None)
+            entry = _session_ws.get(session_key)
+            if entry is not None:
+                registered_ws, _ = entry
+                if registered_ws is ws:
+                    _session_ws.pop(session_key, None)
+                    _session_user.pop(session_key, None)
+        # Signal "my resources are released" — if we were replaced, the
+        # new connection is waiting on this event.  The event is stashed
+        # at ws_holder[1] by the replacing connection.
+        release_event = ws_holder[1] if len(ws_holder) > 1 else None
+        if release_event is not None:
+            release_event.set()
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -239,7 +363,11 @@ async def _session_worker(
     """
     from agent_runtime.registry import create_adapter
 
-    adapter = await create_adapter(mode, agent_id, user, session_id, model_config)
+    try:
+        adapter = await create_adapter(mode, agent_id, user, session_id, model_config)
+    except Exception as exc:
+        _try_push(ws_holder, {"type": "error", "message": f"Agent 启动失败: {exc}"})
+        return
 
     try:
         while True:
@@ -248,18 +376,32 @@ async def _session_worker(
                 break
 
             turn_id = new_id()
+            session_key = f"{agent_id}/{session_id}"
 
-            # ── Signal frontend: turn starting ──
-            _try_push(ws_holder, {"type": "turn_start", "text": text, "turnId": turn_id})
+            # ── Session-level mutex: only ONE turn processes at a time ──
+            # for this session, even if single-connection enforcement has a
+            # race window.  Held for the entire turn (queue wait + LLM call).
+            session_lock = _get_session_lock(session_key)
 
-            # ── Store reference for abort access ──
-            llm_holder[0] = adapter.client
+            # ── Acquire user concurrency slot ────────────────────────────
+            sem = _get_user_sem(user)
+            if sem.locked():
+                _try_push(ws_holder, {
+                    "type": "turn_queued",
+                    "text": text,
+                    "turnId": turn_id,
+                    "message": "当前消息正在排队，请等待...",
+                })
 
-            # ── Process this turn ──
-            client_alive = await _process_turn(
-                session_id, text, model, model_config, ws_holder, adapter, turn_id,
-                skip_mock=(mode == "claude"),
-            )
+            async with session_lock:
+                async with sem:
+                    _try_push(ws_holder, {"type": "turn_start", "text": text, "turnId": turn_id})
+                    llm_holder[0] = adapter.client
+
+                    client_alive = await _process_turn(
+                        session_id, text, model, model_config, ws_holder, adapter, turn_id,
+                        skip_mock=(mode == "claude"),
+                    )
 
             # ── Clean up reference ──
             llm_holder[0] = None
@@ -321,6 +463,7 @@ async def _process_turn(
     reasoning_parts: list[str] = []
     tool_calls: list[dict] = []
     error_msg: str | None = None
+    final_emitted: bool = False  # guard against double-persist if subprocess dies right after model_final
 
     def _push_seg(seg: dict) -> None:
         segments.append(seg)
@@ -364,6 +507,7 @@ async def _process_turn(
                     segments=segments if segments else None,
                     duration_ms=duration_ms,
                 )
+                final_emitted = True
 
             elif event_type == "tool.intent":
                 tc = {
@@ -427,8 +571,9 @@ async def _process_turn(
         await _persist_message(session_id, "assistant", f"[错误] {error_msg}")
 
     # If read_deltas() hit EOF, the subprocess is dead — don't reuse it.
+    # Skip persist if we already emitted model_final (avoids double-persist).
     if not adapter.is_alive():
-        if content_parts or reasoning_parts:
+        if not final_emitted and (content_parts or reasoning_parts):
             await _persist_message(
                 session_id, "assistant",
                 "".join(content_parts),

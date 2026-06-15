@@ -231,10 +231,12 @@ export default function EditAgentPage() {
   };
 
   const handleNewSession = () => {
-    // No session yet — it is created on the first message.
+    // Navigate to chat without a session — first message will create one.
     setSidebarTab('session');
     setRightView('chat');
-    navigate(`/chat/${agentId}`);
+    // Use a timestamp param to force React Router to treat it as a new route,
+    // even when clicking "新建会话" while already on the no-session page.
+    navigate(`/chat/${agentId}?t=${Date.now()}`, { replace: true });
   };
 
   const handleDeleteSession = async (id: string) => {
@@ -243,7 +245,7 @@ export default function EditAgentPage() {
     } catch { /* logged by interceptor */ }
     const res = await sessionService.list(agentId).catch(() => null);
     if (res) setSessions((res.data ?? []).map((s) => ({ id: s.id, name: s.name })));
-    if (id === sessionId) navigate(`/chat/${agentId}`, { replace: true });
+    if (id === sessionId) navigate(`/chat/${agentId}?t=${Date.now()}`, { replace: true });
   };
 
   // File tree handler (personal agent)
