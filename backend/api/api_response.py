@@ -55,7 +55,7 @@ def iso(dt: datetime | None) -> str | None:
 # ─── Session token (HMAC-SHA256, stdlib only) ───────────────────────────────
 
 _SESSION_SECRET = os.environ.get("VERA_SESSION_SECRET", "vera-dev-secret-change-me")
-_SESSION_TTL = 86400 * 7  # 7 days
+_SESSION_TTL = int(os.environ.get("VERA_SESSION_TTL", str(86400)))  # default 24h
 
 
 def sign_session_token(username: str) -> str:
@@ -99,18 +99,40 @@ DEFAULT_USER = "current-user"
 
 def current_user(
     authorization: str | None = Header(default=None, alias="Authorization"),
-    x_user: str | None = Header(default=None, alias="X-User"),
+    vera_token: str | None = Header(default=None, alias="vera-token"),
 ) -> str:
-    """Resolve the acting user from a signed session token (Bearer), falling
-    back to the X-User header for dev / backward compat."""
+    """Resolve the acting user from a signed session token.
+
+    Accepts ``Authorization: Bearer <token>`` or ``vera-token: <token>``
+    (the latter is for MCP servers calling back to Vera).  No fallback.
+    """
+    token = None
     if authorization and authorization.startswith("Bearer "):
-        username = verify_session_token(authorization[7:])
+        token = authorization[7:]
+    elif vera_token:
+        token = vera_token
+    if token:
+        username = verify_session_token(token)
         if username:
+            _store_user_token(username, token)
             return username
         raise HTTPException(status_code=401, detail="登录已过期，请重新登录")
-    if x_user:
-        return unquote(x_user)
-    return DEFAULT_USER
+    raise HTTPException(status_code=401, detail="请先登录")
+
+
+# ── User token cache (for MCP server env injection) ─────────────────────────
+
+_user_tokens: dict[str, str] = {}
+
+
+def _store_user_token(user: str, token: str) -> None:
+    """Cache the most recent token for a user (used by MCP env injection)."""
+    _user_tokens[user] = token
+
+
+def get_user_token(user: str) -> str | None:
+    """Return the most recently seen session token for a user, if any."""
+    return _user_tokens.get(user)
 
 
 # ─── Exception handlers ─────────────────────────────────────────────────────

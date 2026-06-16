@@ -10,7 +10,7 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.api_response import iso, ok
+from api.api_response import current_user, iso, ok
 from api.database import get_db
 from api.models import models as M
 
@@ -49,6 +49,7 @@ async def list_exec_records(
     search: str | None = Query(None),
     date: str | None = Query(None, description="YYYY-MM-DD"),
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     stmt = select(M.ExecRecord).where(M.ExecRecord.agent_id == agent_id)
     if sessionId:
@@ -71,6 +72,7 @@ async def list_modify_records(
     agent_id: str,
     search: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     stmt = select(M.ModifyRecord).where(M.ModifyRecord.agent_id == agent_id)
     if search:

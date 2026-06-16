@@ -136,10 +136,11 @@ async def chat_websocket(ws: WebSocket, agent_id: str) -> None:
     # Fallback: ?user= query param (dev-compat).
     token = ws.query_params.get("token", "")
     if token:
-        from api.api_response import verify_session_token
+        from api.api_response import verify_session_token, _store_user_token
         verified = verify_session_token(token)
         if verified:
             user = verified
+            _store_user_token(user, token)  # cache for MCP env injection
         else:
             try: await ws.send_json({"type":"error","message":"token 无效或已过期"})
             finally: await ws.close()

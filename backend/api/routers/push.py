@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.api_response import iso, ok
+from api.api_response import current_user, iso, ok
 from api.database import get_db
 from api.models import models as M
 from api.schemas import schemas as S
@@ -56,6 +56,7 @@ async def list_push_tasks(
     agent_id: str,
     type: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     stmt = select(M.PushTask).where(M.PushTask.agent_id == agent_id)
     if type and type != "all":
@@ -70,6 +71,7 @@ async def create_push_task(
     agent_id: str,
     data: S.PushTaskCreate,
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     agent = (await db.execute(select(M.Agent).where(M.Agent.id == agent_id))).scalar_one_or_none()
     if agent is None:
@@ -96,6 +98,7 @@ async def update_push_task(
     task_id: str,
     data: S.PushTaskUpdate,
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     task = await _get_task(db, task_id)
     if data.name is not None:
@@ -116,7 +119,7 @@ async def update_push_task(
 
 
 @router.delete("/push-tasks/{task_id}")
-async def delete_push_task(task_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_push_task(task_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     task = await _get_task(db, task_id)
     await db.delete(task)
     await db.commit()
@@ -128,6 +131,7 @@ async def toggle_push_enabled(
     task_id: str,
     data: S.ToggleEnabled,
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     task = await _get_task(db, task_id)
     task.enabled = data.enabled
@@ -140,6 +144,7 @@ async def update_push_status(
     task_id: str,
     data: S.PushStatusUpdate,
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     task = await _get_task(db, task_id)
     task.status = data.status

@@ -174,7 +174,7 @@ async def update_agent(
 
 
 @router.delete("/agents/{agent_id}")
-async def delete_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_agent(agent_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     agent = await _get_agent(db, agent_id)
 
     # Cascade-delete everything that belongs to this agent so nothing orphans.
@@ -201,7 +201,7 @@ async def delete_agent(agent_id: str, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/agents/{agent_id}/star")
-async def toggle_star(agent_id: str, db: AsyncSession = Depends(get_db)):
+async def toggle_star(agent_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     agent = await _get_agent(db, agent_id)
     agent.starred = not agent.starred
     await db.commit()

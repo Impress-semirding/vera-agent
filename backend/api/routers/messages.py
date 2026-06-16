@@ -18,7 +18,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.api_response import iso, ok
+from api.api_response import current_user, iso, ok
 from api.database import async_session, get_db
 from api.models import models as M
 from api.schemas import schemas as S
@@ -61,7 +61,7 @@ async def _get_session(db: AsyncSession, session_id: str) -> M.Session:
 
 
 @router.post("/sessions/{session_id}/reset-context")
-async def reset_context(session_id: str, user: str = Query("current-user"), db: AsyncSession = Depends(get_db)):
+async def reset_context(session_id: str, user: str = Depends(current_user), db: AsyncSession = Depends(get_db)):
     """Clear and re-sync the session workspace (CLAUDE.md + skills)."""
     from agent_runtime.claude.config import _sync_workspace, build_claude_config
     from sqlalchemy import select
@@ -82,7 +82,7 @@ async def reset_context(session_id: str, user: str = Query("current-user"), db: 
 
 
 @router.delete("/sessions/{session_id}/messages")
-async def clear_messages(session_id: str, db: AsyncSession = Depends(get_db)):
+async def clear_messages(session_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     """Delete all messages in a session."""
     from sqlalchemy import delete as _delete
     session = await _get_session(db, session_id)
@@ -96,6 +96,7 @@ async def list_messages(
     session_id: str,
     limit: int = Query(200, ge=1, le=1000),
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     await _get_session(db, session_id)
     msgs = (
@@ -116,6 +117,7 @@ async def send_message(
     role: str = Query("user"),
     reasoningContent: str | None = Query(None),
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     """Persist a message.
 
@@ -143,7 +145,7 @@ async def send_message(
 from fastapi.responses import FileResponse, JSONResponse
 
 @router.get("/files/{session_id}")
-async def list_files(session_id: str, user: str = Query("current-user")):
+async def list_files(session_id: str, user: str = Depends(current_user)):
     """List generated files in the session workspace (any location, excluding config)."""
     from agent_runtime.claude.config import _WORKSPACE_BASE, scan_generated_files
     from sqlalchemy import select
@@ -158,7 +160,7 @@ async def list_files(session_id: str, user: str = Query("current-user")):
 
 
 @router.get("/files/{session_id}/download")
-async def download_file(session_id: str, path: str = Query(...), user: str = Query("current-user")):
+async def download_file(session_id: str, path: str = Query(...), user: str = Depends(current_user)):
     """Download a generated file from the session workspace."""
     from agent_runtime.claude.config import _WORKSPACE_BASE, is_safe_workspace_path
     from sqlalchemy import select

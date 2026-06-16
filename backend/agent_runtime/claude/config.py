@@ -82,6 +82,11 @@ async def build_claude_config(
             )
         )
         servers = servers_result.scalars().all()
+        # Inject the user's session token into every MCP server's env so
+        # the MCP tool can call back to Vera with a vera-token header.
+        from api.api_response import get_user_token
+        user_token = get_user_token(user_id) or ""
+
         config.mcp_servers = []
         for srv in servers:
             tools_result = await db.execute(
@@ -91,11 +96,14 @@ async def build_claude_config(
                 )
             )
             tools = tools_result.scalars().all()
+            env = _json_loads_dict(srv.env)
+            if user_token:
+                env["VERA_TOKEN"] = user_token
             config.mcp_servers.append({
                 "name": srv.name,
                 "command": srv.command,
                 "args": _json_loads_list(srv.args),
-                "env": _json_loads_dict(srv.env),
+                "env": env,
                 "transport": srv.transport,
                 "url": srv.url,
                 "headers": _json_loads_dict(srv.headers),

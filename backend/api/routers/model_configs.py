@@ -47,7 +47,7 @@ async def _get_model_config(db: AsyncSession, config_id: str) -> M.ModelConfig:
 
 
 @router.get("/model-configs")
-async def list_model_configs(db: AsyncSession = Depends(get_db)):
+async def list_model_configs(db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     configs = (
         await db.execute(select(M.ModelConfig).order_by(M.ModelConfig.created_at.desc()))
     ).scalars().all()
@@ -102,6 +102,7 @@ async def update_model_config(
 async def delete_model_config(
     config_id: str,
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     config = await _get_model_config(db, config_id)
     await db.delete(config)
@@ -114,6 +115,7 @@ async def toggle_model_config_enabled(
     config_id: str,
     data: S.ToggleEnabled,
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     config = await _get_model_config(db, config_id)
     config.enabled = data.enabled
@@ -122,7 +124,7 @@ async def toggle_model_config_enabled(
 
 
 @router.get("/model-configs/models")
-async def list_available_models(db: AsyncSession = Depends(get_db)):
+async def list_available_models(db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     """Return enabled model configs as simple {label, value} options for agent dropdowns."""
     configs = (
         await db.execute(

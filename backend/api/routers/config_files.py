@@ -17,7 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.api_response import ok
+from api.api_response import current_user, ok
 from api.database import get_db
 from api.models import models as M
 from api.schemas import schemas as S
@@ -74,7 +74,7 @@ async def _find(db: AsyncSession, agent_id: str, path: str) -> M.ConfigFile | No
 
 
 @router.get("/agents/{agent_id}/config-files")
-async def list_config_files(agent_id: str, db: AsyncSession = Depends(get_db)):
+async def list_config_files(agent_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     rows = (
         await db.execute(select(M.ConfigFile).where(M.ConfigFile.agent_id == agent_id))
     ).scalars().all()
@@ -87,6 +87,7 @@ async def read_config_file(
     agent_id: str,
     path: str = Query(..., description="File path, e.g. CLAUDE.md"),
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     f = await _find(db, agent_id, path)
     if f is None:
@@ -99,6 +100,7 @@ async def create_config_file(
     agent_id: str,
     data: S.ConfigFileCreate,
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     agent = (await db.execute(select(M.Agent).where(M.Agent.id == agent_id))).scalar_one_or_none()
     if agent is None:
@@ -118,6 +120,7 @@ async def upsert_config_file(
     data: S.ConfigFileSave,
     path: str = Query(..., description="File path to create or update"),
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     agent = (await db.execute(select(M.Agent).where(M.Agent.id == agent_id))).scalar_one_or_none()
     if agent is None:
@@ -138,6 +141,7 @@ async def delete_config_file(
     agent_id: str,
     path: str = Query(..., description="File path to delete"),
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     f = await _find(db, agent_id, path)
     if f is None:

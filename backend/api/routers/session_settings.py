@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.api_response import ok
+from api.api_response import current_user, ok
 from api.database import get_db
 from api.models import models as M
 from api.schemas import schemas as S
@@ -48,7 +48,7 @@ async def _get_or_create(db: AsyncSession, agent_id: str) -> M.SessionSetting:
 
 
 @router.get("/agents/{agent_id}/session-settings")
-async def get_settings(agent_id: str, db: AsyncSession = Depends(get_db)):
+async def get_settings(agent_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     s = await _get_or_create(db, agent_id)
     return ok(_settings_out(s))
 
@@ -58,6 +58,7 @@ async def update_settings(
     agent_id: str,
     data: S.SessionSettingsUpdate,
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     s = await _get_or_create(db, agent_id)
     if data.allowUpload is not None:

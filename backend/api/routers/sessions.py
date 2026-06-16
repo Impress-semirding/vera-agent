@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.api_response import iso, ok
+from api.api_response import current_user, iso, ok
 from api.database import get_db
 from api.models import models as M
 from api.schemas import schemas as S
@@ -40,7 +40,7 @@ async def _get_session(db: AsyncSession, session_id: str) -> M.Session:
 
 
 @router.get("/agents/{agent_id}/sessions")
-async def list_sessions(agent_id: str, db: AsyncSession = Depends(get_db)):
+async def list_sessions(agent_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     # Join with last message timestamp for sorting.  Sessions with no messages
     # fall back to created_at, so newly-created sessions still appear at top.
     rows = (
@@ -70,6 +70,7 @@ async def create_session(
     agent_id: str,
     data: S.SessionCreate,
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     # Ensure the agent exists.
     agent = (await db.execute(select(M.Agent).where(M.Agent.id == agent_id))).scalar_one_or_none()
@@ -93,6 +94,7 @@ async def update_session(
     session_id: str,
     data: S.SessionUpdate,
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     session = await _get_session(db, session_id)
     if data.name is not None:
@@ -103,7 +105,7 @@ async def update_session(
 
 
 @router.delete("/sessions/{session_id}")
-async def delete_session(session_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_session(session_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     session = await _get_session(db, session_id)
     await db.execute(delete(M.Message).where(M.Message.session_id == session_id))
     await db.delete(session)

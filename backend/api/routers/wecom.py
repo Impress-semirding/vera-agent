@@ -13,7 +13,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.api_response import ok
+from api.api_response import current_user, ok
 from api.database import get_db
 from api.models import models as M
 from api.schemas import schemas as S
@@ -61,7 +61,7 @@ async def _bindings_for(db: AsyncSession, config_id: str) -> list[M.WeComBinding
 
 
 @router.get("/agents/{agent_id}/wecom")
-async def get_wecom(agent_id: str, db: AsyncSession = Depends(get_db)):
+async def get_wecom(agent_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     cfg = await _get_or_create_config(db, agent_id)
     bindings = await _bindings_for(db, cfg.id)
     return ok(_wecom_out(cfg, bindings))
@@ -72,6 +72,7 @@ async def save_wecom(
     agent_id: str,
     data: S.WeComSave,
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     cfg = await _get_or_create_config(db, agent_id)
     cfg.bot_id = data.botId
@@ -89,6 +90,7 @@ async def toggle_wecom_enabled(
     agent_id: str,
     data: S.WeComEnabledUpdate,
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     cfg = await _get_or_create_config(db, agent_id)
     cfg.enabled = data.enabled
@@ -101,6 +103,7 @@ async def add_binding(
     agent_id: str,
     data: S.WeComBindingCreate,
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     cfg = await _get_or_create_config(db, agent_id)
     binding = M.WeComBinding(
@@ -116,7 +119,7 @@ async def add_binding(
 
 
 @router.delete("/wecom/bindings/{binding_id}")
-async def delete_binding(binding_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_binding(binding_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     binding = (
         await db.execute(select(M.WeComBinding).where(M.WeComBinding.id == binding_id))
     ).scalar_one_or_none()

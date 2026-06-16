@@ -14,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.api_response import ok
+from api.api_response import current_user, ok
 from api.database import get_db
 from api.models import models as M
 from api.schemas import schemas as S
@@ -71,7 +71,7 @@ async def _server_with_tools(db: AsyncSession, server_id: str) -> tuple[M.McpSer
 
 
 @router.get("/agents/{agent_id}/mcp-servers")
-async def list_servers(agent_id: str, db: AsyncSession = Depends(get_db)):
+async def list_servers(agent_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     servers = (
         await db.execute(
             select(M.McpServer).where(M.McpServer.agent_id == agent_id).order_by(M.McpServer.name)
@@ -93,6 +93,7 @@ async def create_server(
     agent_id: str,
     data: S.McpServerCreate,
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     agent = (await db.execute(select(M.Agent).where(M.Agent.id == agent_id))).scalar_one_or_none()
     if agent is None:
@@ -121,6 +122,7 @@ async def update_server(
     server_id: str,
     data: S.McpServerUpdate,
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     server, tools = await _server_with_tools(db, server_id)
     if data.name is not None:
@@ -144,7 +146,7 @@ async def update_server(
 
 
 @router.delete("/mcp-servers/{server_id}")
-async def delete_server(server_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_server(server_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     server = await _get_server(db, server_id)
     await db.execute(delete(M.McpTool).where(M.McpTool.mcp_server_id == server_id))
     await db.delete(server)
@@ -157,6 +159,7 @@ async def toggle_server_disabled(
     server_id: str,
     data: S.ToggleDisabled,
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     server = await _get_server(db, server_id)
     server.disabled = data.disabled
@@ -169,6 +172,7 @@ async def toggle_tool_enabled(
     tool_id: str,
     data: S.ToggleEnabled,
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     tool = (await db.execute(select(M.McpTool).where(M.McpTool.id == tool_id))).scalar_one_or_none()
     if tool is None:

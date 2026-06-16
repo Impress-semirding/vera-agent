@@ -93,14 +93,14 @@ async def _parse_or_400(file: UploadFile) -> dict:
 
 
 @router.post("/skills/inspect")
-async def inspect_skill(file: UploadFile = File(...)):
+async def inspect_skill(file: UploadFile = File(...), user: str = Depends(current_user)):
     """Parse a skill zip and return its name + description without persisting."""
     parsed = await _parse_or_400(file)
     return ok({"name": parsed["name"], "description": parsed["description"]})
 
 
 @router.get("/agents/{agent_id}/skills")
-async def list_skills(agent_id: str, db: AsyncSession = Depends(get_db)):
+async def list_skills(agent_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     skills = (
         await db.execute(
             select(M.Skill).where(M.Skill.agent_id == agent_id).order_by(M.Skill.updated_at.desc())
@@ -173,7 +173,7 @@ async def upload_skill(
 
 
 @router.get("/skills/{skill_id}/download")
-async def download_skill(skill_id: str, db: AsyncSession = Depends(get_db)):
+async def download_skill(skill_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     skill = await _get_skill(db, skill_id)
     if not skill.file_path or not os.path.isfile(skill.file_path):
         raise HTTPException(status_code=404, detail="该技能没有可下载的 zip 包")
@@ -210,7 +210,7 @@ async def update_skill(
 
 
 @router.delete("/skills/{skill_id}")
-async def delete_skill(skill_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_skill(skill_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     skill = await _get_skill(db, skill_id)
     # Remove zip file from disk if it exists.
     if skill.file_path and os.path.isfile(skill.file_path):
@@ -225,6 +225,7 @@ async def toggle_skill_enabled(
     skill_id: str,
     data: S.ToggleEnabled,
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     skill = await _get_skill(db, skill_id)
     skill.enabled = data.enabled

@@ -12,7 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from api.api_response import ok
+from api.api_response import current_user, ok
 from api.database import get_db
 from api.models import models as M
 from api.schemas import schemas as S
@@ -41,7 +41,7 @@ async def _get_permission(db: AsyncSession, permission_id: str) -> M.Permission:
 
 
 @router.get("/agents/{agent_id}/permissions")
-async def list_permissions(agent_id: str, db: AsyncSession = Depends(get_db)):
+async def list_permissions(agent_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     perms = (
         await db.execute(select(M.Permission).where(M.Permission.agent_id == agent_id))
     ).scalars().all()
@@ -53,6 +53,7 @@ async def create_permission(
     agent_id: str,
     data: S.PermissionCreate,
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     agent = (await db.execute(select(M.Agent).where(M.Agent.id == agent_id))).scalar_one_or_none()
     if agent is None:
@@ -78,6 +79,7 @@ async def update_permission(
     permission_id: str,
     data: S.PermissionUpdate,
     db: AsyncSession = Depends(get_db),
+    user: str = Depends(current_user),
 ):
     perm = await _get_permission(db, permission_id)
     if data.userName is not None:
@@ -96,7 +98,7 @@ async def update_permission(
 
 
 @router.delete("/permissions/{permission_id}")
-async def delete_permission(permission_id: str, db: AsyncSession = Depends(get_db)):
+async def delete_permission(permission_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     perm = await _get_permission(db, permission_id)
     await db.delete(perm)
     await db.commit()
