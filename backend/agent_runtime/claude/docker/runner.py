@@ -28,6 +28,16 @@ from stream_emitter import StreamEmitter
 # Config
 # ═══════════════════════════════════════════════════════════════════════
 
+# Workspace constraints appended to Claude Code's default system prompt.
+# Keeps CLAUDE.md empty (user preference) while guiding file output location.
+_WORKSPACE_CONSTRAINT = """\
+## 工作区约束（系统级）
+- 所有生成的文件必须写入 `output/` 目录，不允许在工作区根目录或其他位置创建非临时文件
+- 不允许删除或修改 `CLAUDE.md`、`.claude/` 目录下的任何内容
+- 仅在自己的工作区内操作，不要访问或修改工作区外的路径
+"""
+
+
 class RunnerConfig:
     def __init__(self, data: dict):
         self.mode: str = data.get("mode", "claude")
@@ -94,6 +104,14 @@ async def _process_turn_claude(text: str) -> None:
         mcp_servers=mcp_servers,
         cli_path=cli_path,
         stderr=_on_cli_stderr,
+        # Keep Claude Code's default system prompt, append workspace constraints.
+        # This keeps CLAUDE.md empty (per user preference) while still guiding
+        # the agent to write generated files into output/.
+        system_prompt={
+            "type": "preset",
+            "preset": "claude_code",
+            "append": _WORKSPACE_CONSTRAINT,
+        },
     )
 
     if _session_id:

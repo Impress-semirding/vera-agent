@@ -8,6 +8,11 @@ axios interceptor that returns ``res.data`` directly and reads errors from
 
 from __future__ import annotations
 
+import base64
+import hmac
+import hashlib
+import os
+import time
 from datetime import datetime
 from typing import Any
 from urllib.parse import unquote
@@ -47,23 +52,65 @@ def iso(dt: datetime | None) -> str | None:
     return dt.isoformat()
 
 
+# ─── Session token (HMAC-SHA256, stdlib only) ───────────────────────────────
+
+_SESSION_SECRET = os.environ.get("VERA_SESSION_SECRET", "vera-dev-secret-change-me")
+_SESSION_TTL = 86400 * 7  # 7 days
+
+
+def sign_session_token(username: str) -> str:
+    """Issue a short-lived signed token for a user."""
+    payload = f"{username}|{int(time.time()) + _SESSION_TTL}"
+    sig = hmac.new(
+        _SESSION_SECRET.encode(), payload.encode(), hashlib.sha256,
+    ).hexdigest()
+    return base64.urlsafe_b64encode(f"{payload}.{sig}".encode()).decode()
+
+
+def verify_session_token(token: str) -> str | None:
+    """Verify a signed session token. Returns username or None."""
+    try:
+        decoded = base64.urlsafe_b64decode(token.encode()).decode()
+        payload, sig = decoded.rsplit(".", 1)
+        expected = hmac.new(
+            _SESSION_SECRET.encode(), payload.encode(), hashlib.sha256,
+        ).hexdigest()
+        if not hmac.compare_digest(sig, expected):
+            return None
+        username, exp_str = payload.split("|", 1)
+        if int(exp_str) < time.time():
+            return None  # expired
+        return username
+    except Exception:
+        return None
+
+
+def verify_session_token_from_header(authorization: str | None) -> str | None:
+    """Extract and verify a token from an Authorization header."""
+    if authorization and authorization.startswith("Bearer "):
+        return verify_session_token(authorization[7:])
+    return None
+
+
 # ─── Current user ───────────────────────────────────────────────────────────
-# There is no real auth in the management API yet. ``created_by`` / ``updated_by``
-# are populated from the ``X-User`` header so a client can impersonate a user
-# (useful against the seeded data, e.g. ``X-User: ``). Defaults to
-# ``current-user`` so created agents show up under the "mine" filter.
 
 DEFAULT_USER = "current-user"
 
 
-def current_user(x_user: str | None = Header(default=None, alias="X-User")) -> str:
-    """Resolve the acting user from the ``X-User`` header.
-
-    The frontend percent-encodes the value (``encodeURIComponent``) because
-    HTTP header bytes are decoded as latin-1 — raw non-ASCII (e.g. Chinese
-    names) would arrive mojibake'd. We unquote here to recover the real name.
-    """
-    return unquote(x_user) if x_user else DEFAULT_USER
+def current_user(
+    authorization: str | None = Header(default=None, alias="Authorization"),
+    x_user: str | None = Header(default=None, alias="X-User"),
+) -> str:
+    """Resolve the acting user from a signed session token (Bearer), falling
+    back to the X-User header for dev / backward compat."""
+    if authorization and authorization.startswith("Bearer "):
+        username = verify_session_token(authorization[7:])
+        if username:
+            return username
+        raise HTTPException(status_code=401, detail="登录已过期，请重新登录")
+    if x_user:
+        return unquote(x_user)
+    return DEFAULT_USER
 
 
 # ─── Exception handlers ─────────────────────────────────────────────────────

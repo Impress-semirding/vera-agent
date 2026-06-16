@@ -46,3 +46,13 @@ async def _migrate(conn) -> None:
         await conn.execute(text("ALTER TABLE skills ADD COLUMN file_path VARCHAR(500)"))
     if "filename" not in columns:
         await conn.execute(text("ALTER TABLE skills ADD COLUMN filename VARCHAR(500)"))
+
+    # users: add dingtalk_union_id for DingTalk SSO login (nullable, no unique
+    # constraint — SQLite can't add one to an existing table; enforced in app code).
+    user_cols = {r[1] for r in (await conn.execute(text("PRAGMA table_info(users)"))).fetchall()}
+    if "dingtalk_union_id" not in user_cols:
+        await conn.execute(text("ALTER TABLE users ADD COLUMN dingtalk_union_id VARCHAR(128)"))
+    if "is_superuser" not in user_cols:
+        await conn.execute(text("ALTER TABLE users ADD COLUMN is_superuser BOOLEAN DEFAULT 0"))
+    if "max_concurrent_turns" not in user_cols:
+        await conn.execute(text("ALTER TABLE users ADD COLUMN max_concurrent_turns INTEGER"))

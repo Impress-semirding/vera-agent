@@ -15,9 +15,11 @@ fully separate.
 
 from __future__ import annotations
 
-# Load .env before any other code reads os.environ
+# Load .env before any other code reads os.environ.
+# Explicit path (relative to this file) so it works regardless of cwd.
+import os as _os
 from dotenv import load_dotenv
-load_dotenv()
+load_dotenv(_os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), ".env"))
 
 import logging
 import os
@@ -39,6 +41,7 @@ from api.api_response import ok, register_exception_handlers
 from api.database import async_session, init_db
 from api.models.seed import seed
 from api.routers import (
+    admin,
     agents,
     auth,
     chat,
@@ -117,6 +120,7 @@ for _router in (
     push.router,
     wechat.router,
     wecom.router,
+    admin.router,
     session_settings.router,
     config_files.router,
     history.router,

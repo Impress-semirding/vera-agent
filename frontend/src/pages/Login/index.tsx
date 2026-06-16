@@ -1,8 +1,9 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
-import { Button, Form, Input, Alert } from 'antd';
+import { Button, Form, Input, Alert, Divider } from 'antd';
 import { StarOutlined } from '@ant-design/icons';
 import { useAuthStore } from '@/stores/useAuthStore';
+import { authService } from '@/services/authService';
 
 export default function LoginPage() {
   const navigate = useNavigate();
@@ -10,9 +11,17 @@ export default function LoginPage() {
   const login = useAuthStore((s) => s.login);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [dingtalkEnabled, setDingtalkEnabled] = useState(false);
 
   // Where to go after login (the page the user was trying to reach).
   const from = (location.state as { from?: string } | null)?.from ?? '/';
+
+  // Probe whether DingTalk login is configured (hides button if not).
+  useEffect(() => {
+    authService.dingtalkConfig().then((res: any) => {
+      setDingtalkEnabled(!!res.data?.enabled);
+    }).catch(() => setDingtalkEnabled(false));
+  }, []);
 
   const handleFinish = async (values: { identifier: string; password: string }) => {
     setError(null);
@@ -27,6 +36,23 @@ export default function LoginPage() {
       setError(msg);
     } finally {
       setSubmitting(false);
+    }
+  };
+
+  const handleDingtalk = async () => {
+    setError(null);
+    try {
+      const res: any = await authService.dingtalkConfig();
+      if (!res.data?.enabled || !res.data.authorizeUrl) {
+        setError('钉钉登录未配置');
+        return;
+      }
+      // state is held in sessionStorage for the callback to validate
+      if (res.data.state) sessionStorage.setItem('dingtalk_state', res.data.state);
+      sessionStorage.setItem('login_from', from);
+      window.location.href = res.data.authorizeUrl;
+    } catch {
+      setError('无法发起钉钉登录');
     }
   };
 
@@ -52,8 +78,14 @@ export default function LoginPage() {
           <Button type="primary" htmlType="submit" block loading={submitting}>登录</Button>
         </Form>
 
-        <div style={{ marginTop: 16, textAlign: 'center', fontSize: 12, color: '#00000040' }}>
-        </div>
+        {dingtalkEnabled && (
+          <>
+            <Divider style={{ margin: '16px 0', fontSize: 12, color: '#00000040' }}>或</Divider>
+            <Button block size="large" onClick={handleDingtalk} style={{ color: '#1677ff', borderColor: '#1677ff' }}>
+              钉钉登录
+            </Button>
+          </>
+        )}
       </div>
     </div>
   );

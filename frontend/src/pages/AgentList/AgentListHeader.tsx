@@ -76,6 +76,9 @@ export default function AgentListHeader() {
         <Button icon={<SettingOutlined />} onClick={() => setModelConfigOpen(true)}>
           模型配置
         </Button>
+        {user?.isSuperuser && (
+          <Button onClick={() => navigate('/admin/users')}>用户并发管理</Button>
+        )}
         <Button type="primary" icon={<PlusOutlined />} onClick={() => navigate('/create')}>
           创建智能体
         </Button>

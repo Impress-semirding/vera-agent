@@ -169,10 +169,16 @@ export default function EditAgentPage() {
     },
     [agentId, navigate],
   );
+
+  const handleSessionRenamed = useCallback((id: string, name: string) => {
+    setSessions(prev => prev.map(s => s.id === id ? { ...s, name } : s));
+  }, []);
+
   const { messages, streaming, artifacts, send, stop, clear } = useChatSocket(
     agentId,
     sessionId,
     handleSessionCreated,
+    handleSessionRenamed,
   );
 
   const handleResetContext = useCallback(() => {
@@ -248,6 +254,18 @@ export default function EditAgentPage() {
     if (id === sessionId) navigate(`/chat/${agentId}?t=${Date.now()}`, { replace: true });
   };
 
+  const handleRenameSession = async (id: string, name: string) => {
+    // Optimistic update
+    setSessions(prev => prev.map(s => s.id === id ? { ...s, name } : s));
+    try {
+      await sessionService.rename(id, name);
+    } catch {
+      // Revert on failure
+      const res = await sessionService.list(agentId).catch(() => null);
+      if (res) setSessions((res.data ?? []).map((s) => ({ id: s.id, name: s.name })));
+    }
+  };
+
   // File tree handler (personal agent)
   const handleFileSelect = (name: string, content: string) => {
     setConfigFileName(name);
@@ -283,7 +301,7 @@ export default function EditAgentPage() {
 
         {/* Session view */}
         {sidebarTab === 'session' && (
-          <SessionList sessions={sidebarSessions} onNew={handleNewSession} onSelect={handleSessionSelect} onDelete={handleDeleteSession} />
+          <SessionList sessions={sidebarSessions} onNew={handleNewSession} onSelect={handleSessionSelect} onDelete={handleDeleteSession} onRename={handleRenameSession} />
         )}
 
         {/* Config view */}
@@ -525,7 +543,7 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
                               padding: '6px 16px', borderRadius: 12, fontSize: 14, lineHeight: 1.6,
                               background: '#f5f5f5', color: '#000000e0',
                             }}>
-                              <ReactMarkdown components={{ code: CodeBlock }}>{msg.content}</ReactMarkdown>
+                              <ReactMarkdown components={{ code: CodeBlock, p: 'div' }}>{msg.content}</ReactMarkdown>
                               {msg.pending ? <TypingDots /> : null}
                             </div>
                           </>
@@ -1257,7 +1275,7 @@ function TextSegment({ text }: { text: string; pending?: boolean }) {
       padding: '6px 16px', borderRadius: 12, fontSize: 14, lineHeight: 1.6,
       background: '#f5f5f5', color: '#000000e0',
     }}>
-      <ReactMarkdown components={{ code: CodeBlock }}>{text}</ReactMarkdown>
+      <ReactMarkdown components={{ code: CodeBlock, p: 'div' }}>{text}</ReactMarkdown>
     </div>
   );
 }

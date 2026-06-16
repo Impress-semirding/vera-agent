@@ -1,36 +1,43 @@
-"""WebSocket chat endpoint.
+"""WebSocket chat endpoint — one connection per agent, multiplexed by sessionId.
 
-    ws /api/v1/chat/{agent_id}/{session_id}?user=<x>
+    ws /api/v1/chat/{agent_id}?user=<x>
+
+One WebSocket per agent (per browser tab).  Sessions are multiplexed over it:
+every frame carries a `sessionId`.  The backend routes each session to its own
+worker (own adapter + queue), so multiple sessions share one connection.
 
 Client → server JSON frames:
-  {"type": "user_input", "text": "..."}
-  {"type": "pong"}                      (heartbeat response)
-  {"type": "abort"}                     (stop current turn, keep queue)
+  {"type":"user_input", "sessionId":"...", "text":"..."}
+  {"type":"abort", "sessionId":"..."}
+  {"type":"pong"}
 
-Server → client JSON frames:
-  {"type": "ready", "sessionId", "agentName"}
-  {"type": "session", "sessionId", "created": true}
-  {"type": "turn_start", "text", "turnId"} (worker begins processing a message)
-  {"type": "user_message", "text"}
-  {"type": "model_delta", "channel", "text", "turnId"}
-  {"type": "model_final", "content", "reasoningContent", "turnId"}
-  {"type": "error", "message"}
-  {"type": "stopped"}                   (abort acknowledged, queue may have more)
-  {"type": "ping"}                      (heartbeat probe)
+Server → client JSON frames (turn-related carry sessionId):
+  {"type":"ready", "agentName"}
+  {"type":"turn_queued", "sessionId", "turnId"}
+  {"type":"turn_start", "sessionId", "turnId", "text"}
+  {"type":"model_delta", "sessionId", "channel", "text", "turnId"}
+  {"type":"tool.*", "sessionId", ...}
+  {"type":"model_final", "sessionId", "content", "reasoningContent", "turnId"}
+  {"type":"session_renamed", "sessionId", "name"}
+  {"type":"error", "sessionId"?, "message"}
+  {"type":"stopped", "sessionId"}
+  {"type":"ping"}
 
 Architecture:
-  - A per-session asyncio.Queue collects user messages.
-  - A single worker task consumes the queue sequentially — one LLM call at a time.
-  - The LLM subprocess (agent/chat.py) is reused across turns; it maintains
-    conversation history internally.
-  - abort only stops the current LLM call; queued messages are preserved and
-    processed after the current turn is cancelled.
+  - One WS connection per agent.  Per-session workers are spawned lazily on the
+    first message to that session (just viewing a session costs nothing).
+  - Each worker owns an AgentAdapter (Docker container via the pool) + a queue;
+    turns within a session are serialized by a per-session lock.
+  - A user-level semaphore caps concurrent turn processing across all sessions.
+  - Session count is not explicitly limited — bounded by the container pool
+    and the turn semaphore.
 """
 
 from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from typing import TYPE_CHECKING
 
@@ -50,71 +57,99 @@ router = APIRouter(tags=["chat"])
 
 DEFAULT_USER = "current-user"
 _PING_INTERVAL = 30
-_IDLE_TIMEOUT = 180  # 3 minutes — close only if BOTH client and agent are silent
+_IDLE_TIMEOUT = 180  # close only if connection idle AND no active workers
 _SHUTDOWN = None
 
-# Track active WS per session — strict single-connection enforcement.
-# Value is (websocket, ws_holder) tuple.
-# When a connection is replaced, the old connection's release_event
-# (stored in a closure/local) signals when its resources are freed.
-_session_ws: dict[str, tuple[WebSocket, list[WebSocket | None]]] = {}
-
 # ── User-level concurrency control ─────────────────────────────────
-# Per-user semaphore caps concurrent turn processing across all sessions.
-# Key = user name, Value = asyncio.Semaphore
+# Caps concurrent turn processing per user across ALL their sessions.
 _user_semaphores: dict[str, asyncio.Semaphore] = {}
 
-# Map session_key → user name (for cleanup on disconnect).
-_session_user: dict[str, str] = {}
-
-# Per-session mutex — defence-in-depth against concurrent turn processing
-# within the same session (in case single-connection enforcement has a
-# race window).  Key = session_key.
+# Per-session serialization lock (key = session_id). Ensures one turn at a
+# time within a session even if multiple workers exist.
 _session_locks: dict[str, asyncio.Lock] = {}
 
 
-def _get_session_lock(session_key: str) -> asyncio.Lock:
-    """Get or create the per-session mutex."""
-    lock = _session_locks.get(session_key)
-    if lock is None:
-        lock = asyncio.Lock()
-        _session_locks[session_key] = lock
-    return lock
-
-
 def _get_max_turns() -> int:
-    """Max concurrent turns per user, from env or default 3."""
-    import os
+    """Default max concurrent turns per user, from env or default 3."""
     return int(os.environ.get("AGENT_MAX_CONCURRENT_TURNS", "3"))
 
 
-def _get_max_sessions() -> int:
-    """Max active WS sessions per user, from env or default 5."""
-    import os
-    return int(os.environ.get("AGENT_MAX_SESSIONS", "5"))
+def _get_session_lock(session_id: str) -> asyncio.Lock:
+    lock = _session_locks.get(session_id)
+    if lock is None:
+        lock = asyncio.Lock()
+        _session_locks[session_id] = lock
+    return lock
 
 
-def _get_user_sem(user: str) -> asyncio.Semaphore:
-    """Get or lazily create the per-user turn semaphore."""
+async def _resolve_user_turn_limit(user: str) -> int:
+    """A user's turn cap: their configured max_concurrent_turns, else env default."""
+    try:
+        async with async_session() as db:
+            u = (
+                await db.execute(select(M.User).where(M.User.name == user))
+            ).scalar_one_or_none()
+            if u is not None and u.max_concurrent_turns:
+                return max(1, int(u.max_concurrent_turns))
+    except Exception:
+        pass
+    return _get_max_turns()
+
+
+async def _get_user_sem(user: str) -> asyncio.Semaphore:
+    """Get or lazily create the per-user turn semaphore.
+
+    The cap is resolved from the user's config (User.max_concurrent_turns) at
+    creation time, falling back to the env default.  Call ``invalidate_user_sem``
+    after an admin changes a user's limit so the next turn picks it up.
+    """
     sem = _user_semaphores.get(user)
-    if sem is None:
-        sem = asyncio.Semaphore(_get_max_turns())
-        _user_semaphores[user] = sem
+    if sem is not None:
+        return sem
+    limit = await _resolve_user_turn_limit(user)
+    sem = asyncio.Semaphore(limit)
+    _user_semaphores[user] = sem
     return sem
 
 
-@router.websocket("/chat/{agent_id}/{session_id}")
-async def chat_websocket(ws: WebSocket, agent_id: str, session_id: str) -> None:
-    await ws.accept()
-    user = ws.query_params.get("user") or DEFAULT_USER
+def invalidate_user_sem(user: str) -> None:
+    """Drop a user's cached semaphore so the next creation reads the fresh limit."""
+    _user_semaphores.pop(user, None)
 
-    # Kick old connection for the same session (only one active WS per session)
-    ws_holder: list[WebSocket | None] = [ws]
-    llm_holder: list[LLMClient | None] = [None]
-    session_key: str | None = None
+
+# Per-(user, agent) single-WS enforcement. With multiplexing, one WS handles
+# all of a user's sessions for an agent — a second tab for the SAME agent kills
+# the first. Different agents coexist (different key).
+# Key = f"{user}:{agent_id}", Value = WebSocket.
+_user_ws: dict[str, WebSocket] = {}
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# WebSocket endpoint
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@router.websocket("/chat/{agent_id}")
+async def chat_websocket(ws: WebSocket, agent_id: str) -> None:
+    await ws.accept()
+    # Token auth (primary): verify signed session token.
+    # Fallback: ?user= query param (dev-compat).
+    token = ws.query_params.get("token", "")
+    if token:
+        from api.api_response import verify_session_token
+        verified = verify_session_token(token)
+        if verified:
+            user = verified
+        else:
+            try: await ws.send_json({"type":"error","message":"token 无效或已过期"})
+            finally: await ws.close()
+            return
+    else:
+        user = ws.query_params.get("user") or DEFAULT_USER
+    user_agent_key: str | None = None
 
     try:
-        # ─── 1. validate agent + ownership ───────────────────────────────────
+        # ─── validate agent + ownership + model config ───────────────────
         async with async_session() as db:
             agent = (
                 await db.execute(select(M.Agent).where(M.Agent.id == agent_id))
@@ -125,145 +160,81 @@ async def chat_websocket(ws: WebSocket, agent_id: str, session_id: str) -> None:
             if not await can_access_agent(db, agent, user):
                 await _send_error(ws, "无权访问该智能体")
                 return
-
-            # ─── 2. resolve / create session ─────────────────────────────────
-            session = (
-                await db.execute(select(M.Session).where(M.Session.id == session_id))
-            ).scalar_one_or_none()
-            if session is None:
-                session = M.Session(id=new_id(), agent_id=agent_id, name="新会话")
-                db.add(session)
-                await db.commit()
-                await db.refresh(session)
-                await ws.send_json({"type": "session", "sessionId": session.id, "created": True})
-            elif session.agent_id != agent_id:
-                await _send_error(ws, "会话不属于该智能体")
-                return
-
-            agent_name = agent.name
-            agent_model = agent.model
-            resolved_session_id = session.id
-
-            # ─── 2b. resolve model config ────────────────────────────────────
             model_config = (
                 await db.execute(
                     select(M.ModelConfig).where(
-                        M.ModelConfig.model_id == agent_model,
+                        M.ModelConfig.model_id == agent.model,
                         M.ModelConfig.enabled.is_(True),
                     )
                 )
             ).scalar_one_or_none()
+            if model_config is None:
+                # Fallback: any enabled config (agent.model may be stale)
+                model_config = (
+                    await db.execute(
+                        select(M.ModelConfig).where(M.ModelConfig.enabled.is_(True)).limit(1)
+                    )
+                ).scalar_one_or_none()
+            if model_config is None:
+                await _send_error(ws, f"智能体未配置可用模型（model={agent.model}），请先在模型配置中启用")
+                return
+            agent_name = agent.name
+            agent_model = agent.model
+            mode = agent.mode
 
-        # ─── 3. ready — single-connection per session (backend enforced) ──────
-        session_key = f"{agent_id}/{resolved_session_id}"
-        existing = _session_ws.get(session_key)
-        if existing is not None:
-            existing_ws, existing_holder = existing
-            # Create a release event that the OLD connection's finally block
-            # will signal when its resources (adapter, container) are freed.
-            old_released: asyncio.Event = asyncio.Event()
-            # Stash it on the old holder so the old finally can find it.
-            # We use a sentinel key in the holder list: holder[1] = release_event
-            existing_holder.append(old_released)  # type: ignore[arg-type]
-
-            # Kill the old connection
-            existing_holder[0] = None
+        # ─── enforce single WS per (user, agent) ────────────────────────
+        # A second tab for the same agent kills the first. The new WS then
+        # receives all pushes for this user+agent.
+        user_agent_key = f"{user}:{agent_id}"
+        old_ws = _user_ws.get(user_agent_key)
+        if old_ws is not None and old_ws is not ws:
             try:
-                await existing_ws.close(code=4001, reason="replaced by new connection")
+                await old_ws.close(code=4001, reason="replaced by new connection")
             except Exception:
                 pass
+        _user_ws[user_agent_key] = ws
 
-            # Wait for old worker to finish cleanup (adapter closed, container gone)
-            try:
-                await asyncio.wait_for(old_released.wait(), timeout=10)
-            except asyncio.TimeoutError:
-                pass
+        await ws.send_json({"type": "ready", "agentName": agent_name})
 
-            _session_ws.pop(session_key, None)
+        # ─── per-session worker registry (within this connection) ────────
+        sessions: dict[str, dict] = {}  # session_id → {queue, worker, llm_holder}
 
-        _session_ws[session_key] = (ws, ws_holder)
+        def make_push(session_id: str):
+            """Session-scoped sender — stamps sessionId on every frame."""
+            def push(frame: dict) -> None:
+                _try_send(ws, {**frame, "sessionId": session_id})
+            return push
 
-        # ── Check per-user session limit ───────────────────────────────
-        max_sessions = _get_max_sessions()
-        _session_user[session_key] = user
-        current_sessions = sum(1 for sk, u in _session_user.items()
-                               if u == user and sk.startswith(f"{agent_id}/"))
-        if current_sessions > max_sessions:
-            # Don't force-close — send a friendly prompt and let the user
-            # decide.  Poll until a slot frees or the user disconnects.
-            await ws.send_json({
-                "type": "session_limit",
-                "message": f"已达上限 ({max_sessions}个会话)，请关闭其他标签页后等待自动重连",
-                "maxSessions": max_sessions,
-                "currentSessions": current_sessions,
-            })
-            # Remove from tracking so we don't count this waiting WS as active
-            _session_ws.pop(session_key, None)
-            _session_user.pop(session_key, None)
-            # Wait loop: poll every 5s until a slot frees or user leaves
-            try:
-                while True:
-                    await asyncio.sleep(5)
-                    count = sum(1 for sk, u in _session_user.items()
-                               if u == user and sk.startswith(f"{agent_id}/"))
-                    if count < max_sessions:
-                        # Slot freed — but check if another WS for the same
-                        # session already connected while we were waiting
-                        if _session_ws.get(session_key) is not None:
-                            # Another connection took this session — we're
-                            # no longer needed
-                            await ws.send_json({
-                                "type": "session_limit",
-                                "message": "该会话已被其他连接接管，请关闭此标签页",
-                            })
-                            return
-                        _session_ws[session_key] = (ws, ws_holder)
-                        _session_user[session_key] = user
-                        await ws.send_json({
-                            "type": "session_resume",
-                            "message": "会话槽位已释放，正在连接...",
-                        })
-                        break
-                    # Keep-alive ping so the frontend knows we're still waiting
-                    try:
-                        await ws.send_json({"type": "session_waiting", "message": f"等待中 ({count}/{max_sessions})..."})
-                    except Exception:
-                        return  # user disconnected
-            except Exception:
-                return  # user disconnected or error
-
-        await ws.send_json({
-            "type": "ready",
-            "sessionId": resolved_session_id,
-            "agentName": agent_name,
-        })
-
-        # ─── 4. message queue + worker ──────────────────────────────────────
-        msg_queue: asyncio.Queue[str | None] = asyncio.Queue()
-        worker_task = asyncio.create_task(
-            _session_worker(
-                session_id=resolved_session_id,
-                model=agent_model,
-                mode=agent.mode,
-                agent_id=agent_id,
-                user=user,
-                model_config=model_config,
-                ws_holder=ws_holder,
-                llm_holder=llm_holder,
-                msg_queue=msg_queue,
+        async def ensure_worker(session_id: str) -> None:
+            """Lazily spawn (or re-spawn if dead) a worker for a session."""
+            existing = sessions.get(session_id)
+            if existing is not None and not existing["worker"].done():
+                return  # alive — reuse
+            queue: asyncio.Queue[str | None] = asyncio.Queue()
+            llm_holder: list[LLMClient | None] = [None]
+            push = make_push(session_id)
+            worker = asyncio.create_task(
+                _session_worker(
+                    session_id=session_id,
+                    model=agent_model,
+                    mode=mode,
+                    agent_id=agent_id,
+                    user=user,
+                    model_config=model_config,
+                    push=push,
+                    llm_holder=llm_holder,
+                    msg_queue=queue,
+                )
             )
-        )
+            sessions[session_id] = {"queue": queue, "worker": worker, "llm_holder": llm_holder}
 
-        # ─── 5. heartbeat ──────────────────────────────────────────────────
+        # ─── heartbeat ───────────────────────────────────────────────────
         async def _heartbeat():
             try:
                 while True:
                     await asyncio.sleep(_PING_INTERVAL)
-                    current = ws_holder[0]
-                    if current is None:
-                        return
                     try:
-                        await current.send_json({"type": "ping"})
+                        await ws.send_json({"type": "ping"})
                     except Exception:
                         return
             except asyncio.CancelledError:
@@ -271,52 +242,63 @@ async def chat_websocket(ws: WebSocket, agent_id: str, session_id: str) -> None:
 
         heartbeat_task = asyncio.create_task(_heartbeat())
 
-        # ─── 6. chat loop — message dispatcher ──────────────────────────────
+        # ─── dispatch loop ───────────────────────────────────────────────
         try:
             while True:
                 try:
                     frame = await asyncio.wait_for(ws.receive_json(), timeout=_IDLE_TIMEOUT)
                 except asyncio.TimeoutError:
-                    # Only close if agent is idle — don't kill during long turns
-                    if worker_task.done():
+                    # Only close if idle AND no active workers
+                    if all(s["worker"].done() for s in sessions.values()):
                         return
-                    continue  # agent busy, reset timer
+                    continue
                 except WebSocketDisconnect:
                     return
                 except Exception:
                     continue
 
                 msg_type = frame.get("type", "")
+                sid = str(frame.get("sessionId") or "")
 
                 if msg_type == "user_input":
                     text = str(frame.get("text") or "").strip()
-                    if text:
-                        # Persist immediately so messages survive crashes.
-                        await _persist_message(resolved_session_id, "user", text)
-                        await msg_queue.put(text)
+                    if text and sid:
+                        await ensure_worker(sid)
+                        await _persist_message(sid, "user", text)
+                        new_name = await _maybe_rename_session(sid, text)
+                        if new_name:
+                            make_push(sid)({"type": "session_renamed", "name": new_name})
+                        await sessions[sid]["queue"].put(text)
 
                 elif msg_type == "abort":
-                    current_llm = llm_holder[0]
-                    if current_llm:
-                        try:
-                            await current_llm.close()
-                        except Exception:
-                            pass
-                    _try_push(ws_holder, {"type": "stopped"})
+                    if sid and sid in sessions:
+                        cur = sessions[sid]["llm_holder"][0]
+                        if cur:
+                            try:
+                                await cur.close()
+                            except Exception:
+                                pass
+                        make_push(sid)({"type": "stopped"})
 
                 elif msg_type == "pong":
                     pass
 
         finally:
             heartbeat_task.cancel()
-            await msg_queue.put(_SHUTDOWN)
-            if not worker_task.done():
-                worker_task.cancel()
+            # Signal all workers to shut down, then await them
+            for s in sessions.values():
                 try:
-                    await worker_task
-                except (asyncio.CancelledError, Exception):
+                    await s["queue"].put(_SHUTDOWN)
+                except Exception:
                     pass
-
+            for s in sessions.values():
+                w = s["worker"]
+                if not w.done():
+                    w.cancel()
+                    try:
+                        await w
+                    except (asyncio.CancelledError, Exception):
+                        pass
 
     except WebSocketDisconnect:
         return
@@ -326,24 +308,14 @@ async def chat_websocket(ws: WebSocket, agent_id: str, session_id: str) -> None:
         except Exception:
             pass
     finally:
-        ws_holder[0] = None
-        if session_key:
-            entry = _session_ws.get(session_key)
-            if entry is not None:
-                registered_ws, _ = entry
-                if registered_ws is ws:
-                    _session_ws.pop(session_key, None)
-                    _session_user.pop(session_key, None)
-        # Signal "my resources are released" — if we were replaced, the
-        # new connection is waiting on this event.  The event is stashed
-        # at ws_holder[1] by the replacing connection.
-        release_event = ws_holder[1] if len(ws_holder) > 1 else None
-        if release_event is not None:
-            release_event.set()
+        # Unregister only if we're still the active WS for this user+agent
+        # (a newer connection may have already replaced us).
+        if user_agent_key and _user_ws.get(user_agent_key) is ws:
+            _user_ws.pop(user_agent_key, None)
 
 
 # ═══════════════════════════════════════════════════════════════════════
-# Session Worker
+# Session Worker — one per session, multiplexed under a connection
 # ═══════════════════════════════════════════════════════════════════════
 
 
@@ -354,21 +326,23 @@ async def _session_worker(
     agent_id: str,
     user: str,
     model_config: M.ModelConfig | None,
-    ws_holder: list[WebSocket | None],
+    push,
     llm_holder: list[LLMClient | None],
     msg_queue: asyncio.Queue[str | None],
 ) -> None:
-    """Consume messages one at a time. Uses AgentAdapter to route to the
-    correct backend (Claude Agent SDK for mode=claude, raw HTTP otherwise).
+    """Consume a session's message queue one at a time. Each turn acquires
+    the session lock (serialize within session) then the user semaphore
+    (cap concurrent turns across sessions).
+
+    The adapter (Docker container) is created lazily per turn, INSIDE the
+    semaphore slot — so a container only occupies a pool slot when we actually
+    have a turn slot.  If adapter creation fails, the message fails (it's
+    already persisted in the DB) but the worker stays alive so subsequent
+    queued messages still get processed.
     """
     from agent_runtime.registry import create_adapter
 
-    try:
-        adapter = await create_adapter(mode, agent_id, user, session_id, model_config)
-    except Exception as exc:
-        _try_push(ws_holder, {"type": "error", "message": f"Agent 启动失败: {exc}"})
-        return
-
+    adapter = None
     try:
         while True:
             text = await msg_queue.get()
@@ -376,47 +350,64 @@ async def _session_worker(
                 break
 
             turn_id = new_id()
-            session_key = f"{agent_id}/{session_id}"
+            session_lock = _get_session_lock(session_id)
+            sem = await _get_user_sem(user)
 
-            # ── Session-level mutex: only ONE turn processes at a time ──
-            # for this session, even if single-connection enforcement has a
-            # race window.  Held for the entire turn (queue wait + LLM call).
-            session_lock = _get_session_lock(session_key)
-
-            # ── Acquire user concurrency slot ────────────────────────────
-            sem = _get_user_sem(user)
-            if sem.locked():
-                _try_push(ws_holder, {
+            # Tell the frontend this turn is queued if EITHER the session is
+            # busy (same-session back-to-back) OR the user concurrency slots
+            # are full (cross-session).
+            if session_lock.locked() or sem.locked():
+                push({
                     "type": "turn_queued",
-                    "text": text,
                     "turnId": turn_id,
                     "message": "当前消息正在排队，请等待...",
                 })
 
             async with session_lock:
                 async with sem:
-                    _try_push(ws_holder, {"type": "turn_start", "text": text, "turnId": turn_id})
-                    llm_holder[0] = adapter.client
+                    # (Re)create the adapter inside the turn slot. If the
+                    # previous turn left it dead, or this is the first turn,
+                    # build a fresh one.  Failure here drops THIS message
+                    # (already in DB) but keeps the worker alive for the next.
+                    adapter_ready = True
+                    if adapter is None:
+                        try:
+                            adapter = await create_adapter(mode, agent_id, user, session_id, model_config)
+                        except Exception as exc:
+                            push({"type": "error", "message": f"Agent 启动失败: {exc}"})
+                            adapter_ready = False
 
-                    client_alive = await _process_turn(
-                        session_id, text, model, model_config, ws_holder, adapter, turn_id,
-                        skip_mock=(mode == "claude"),
-                    )
+                    if adapter_ready and adapter is not None:
+                        push({"type": "turn_start", "text": text, "turnId": turn_id})
+                        llm_holder[0] = adapter.client
+                        client_alive = await _process_turn(
+                            session_id, text, model, model_config, push, adapter, turn_id,
+                            skip_mock=(mode == "claude"),
+                        )
+                    else:
+                        client_alive = False
 
-            # ── Clean up reference ──
             llm_holder[0] = None
 
-            # ── Check if client died ──
-            if not client_alive or not adapter.is_alive():
-                await adapter.close()
-                # Re-create adapter (fresh client on next turn)
-                adapter = await create_adapter(mode, agent_id, user, session_id, model_config)
+            # If the adapter died (turn killed it or subprocess crashed), drop
+            # it so the next turn rebuilds a fresh one.
+            if adapter is None or not client_alive or not adapter.is_alive():
+                if adapter is not None:
+                    try:
+                        await adapter.close()
+                    except Exception:
+                        pass
+                adapter = None
 
     except asyncio.CancelledError:
         return
     finally:
         llm_holder[0] = None
-        await adapter.close()
+        if adapter is not None:
+            try:
+                await adapter.close()
+            except Exception:
+                pass
 
 
 async def _process_turn(
@@ -424,46 +415,37 @@ async def _process_turn(
     text: str,
     model: str,
     model_config: M.ModelConfig | None,
-    ws_holder: list[WebSocket | None],
+    push,
     adapter: AgentAdapter | LLMClient | None,
     turn_id: str,
     skip_mock: bool = False,
 ) -> bool:
     """Process one user message: call LLM, stream, persist reply.
 
-    User message is already persisted when received (not here).
-    Returns True if the LLM subprocess is still alive (can be reused),
-    False if it was killed (abort or fatal error).
-
-    When skip_mock is True, the mock tool events are skipped (used for
-    Claude Agent mode where the SDK handles tool calls natively).
+    Returns True if the adapter is still alive (reusable), False if killed.
+    `push(frame)` sends a session-scoped frame to the client.
     """
 
     if adapter is None:
         return False
 
-    # Send user text to the backend (triggers lazy client init on first call)
     try:
         await adapter.send(text)
     except Exception as exc:
         import traceback
-        _try_push(ws_holder, {"type": "error", "message": f"Agent 启动失败: {exc}\n{traceback.format_exc()}"})
+        push({"type": "error", "message": f"Agent 启动失败: {exc}\n{traceback.format_exc()}"})
         return False
 
-    # ── Mock tool events for frontend debugging ──
-    # TODO: Remove when real tool execution is wired in.
-    # Only used in normal mode; Claude Agent mode has real tool calls via SDK.
     if not skip_mock:
-        await _emit_mock_tool_events(ws_holder, turn_id)
+        await _emit_mock_tool_events(push, turn_id)
 
-    # Build segment list as events flow through — matches frontend model
     turn_start_ms = int(time.time() * 1000)
     segments: list[dict] = []
     content_parts: list[str] = []
     reasoning_parts: list[str] = []
     tool_calls: list[dict] = []
     error_msg: str | None = None
-    final_emitted: bool = False  # guard against double-persist if subprocess dies right after model_final
+    final_emitted: bool = False
 
     def _push_seg(seg: dict) -> None:
         segments.append(seg)
@@ -479,15 +461,13 @@ async def _process_turn(
                     content_parts.append(delta_text)
                 else:
                     reasoning_parts.append(delta_text)
-                # Track in segments
                 if channel != "tool_args":
                     source = "content" if channel == "content" else "reasoning"
-                    # Append to last reasoning segment if compatible, else create new
                     if segments and segments[-1].get("kind") == "reasoning" and segments[-1].get("source") == source:
                         segments[-1]["text"] = segments[-1]["text"] + delta_text
                     else:
                         _push_seg({"kind": "reasoning", "text": delta_text, "source": source})
-                _try_push(ws_holder, {**event, "turnId": turn_id})
+                push({**event, "turnId": turn_id})
 
             elif event_type == "model_final":
                 final_content = event.get("content", "")
@@ -497,7 +477,7 @@ async def _process_turn(
                     _push_seg({"kind": "text", "text": final_content})
                 elif assembled:
                     _push_seg({"kind": "text", "text": assembled})
-                _try_push(ws_holder, {**event, "turnId": turn_id})
+                push({**event, "turnId": turn_id})
                 duration_ms = int(time.time() * 1000) - turn_start_ms
                 await _persist_message(
                     session_id, "assistant",
@@ -519,7 +499,7 @@ async def _process_turn(
                 tool_calls.append(tc)
                 _push_seg({"kind": "tool", "callId": tc["callId"], "name": tc["name"],
                            "args": tc["args"], "done": False})
-                _try_push(ws_holder, {**event, "turnId": turn_id})
+                push({**event, "turnId": turn_id})
 
             elif event_type == "tool.result":
                 cid = event.get("callId", "")
@@ -531,47 +511,42 @@ async def _process_turn(
                 for seg in segments:
                     if seg.get("kind") == "tool" and seg.get("callId") == cid:
                         seg["ok"] = ok; seg["output"] = output; seg["done"] = True; break
-                _try_push(ws_holder, {**event, "turnId": turn_id})
+                push({**event, "turnId": turn_id})
 
             elif event_type == "tool.preparing":
-                _try_push(ws_holder, {**event, "turnId": turn_id})
+                push({**event, "turnId": turn_id})
 
             elif event_type == "artifacts":
-                _try_push(ws_holder, {**event, "turnId": turn_id})
+                push({**event, "turnId": turn_id})
 
             elif event_type == "error":
                 error_msg = event.get("message", "未知错误")
-                _try_push(ws_holder, {**event, "turnId": turn_id})
+                push({**event, "turnId": turn_id})
 
     except asyncio.CancelledError:
-        # Worker cancelled (WS disconnect, server shutdown) — persist partial
         if content_parts or reasoning_parts:
             await _persist_message(
                 session_id, "assistant",
                 "".join(content_parts),
                 "".join(reasoning_parts),
             )
-        _try_push(ws_holder, {"type": "model_final", "content": "", "reasoningContent": ""})
-        raise  # re-raise to let worker handle cancellation properly
+        push({"type": "model_final", "content": "", "reasoningContent": ""})
+        raise
     except Exception as exc:
         import traceback
-        # Subprocess was killed (abort or unexpected error) — persist partial response
         if content_parts or reasoning_parts:
             await _persist_message(
                 session_id, "assistant",
                 "".join(content_parts),
                 "".join(reasoning_parts),
             )
-        # Notify frontend so streaming state doesn't get stuck
-        _try_push(ws_holder, {"type": "error", "message": f"处理中断: {exc}"})
-        _try_push(ws_holder, {"type": "model_final", "content": "", "reasoningContent": ""})
+        push({"type": "error", "message": f"处理中断: {exc}"})
+        push({"type": "model_final", "content": "", "reasoningContent": ""})
         return False
 
     if error_msg and not content_parts:
         await _persist_message(session_id, "assistant", f"[错误] {error_msg}")
 
-    # If read_deltas() hit EOF, the subprocess is dead — don't reuse it.
-    # Skip persist if we already emitted model_final (avoids double-persist).
     if not adapter.is_alive():
         if not final_emitted and (content_parts or reasoning_parts):
             await _persist_message(
@@ -579,17 +554,15 @@ async def _process_turn(
                 "".join(content_parts),
                 "".join(reasoning_parts),
             )
-        _try_push(ws_holder, {"type": "error", "message": "LLM 子进程异常退出"})
+        push({"type": "error", "message": "LLM 子进程异常退出"})
         return False
 
-    # ── Scan workspace for files generated this turn ──
-    _try_push(ws_holder, {
+    push({
         "type": "artifacts",
         "turnId": turn_id,
         "files": await _scan_workspace(adapter, turn_id),
     })
 
-    # LLM subprocess completed normally — still alive for reuse
     return True
 
 
@@ -598,111 +571,35 @@ async def _process_turn(
 # ═══════════════════════════════════════════════════════════════════════
 
 
-async def _emit_mock_tool_events(
-    ws_holder: list[WebSocket | None],
-    turn_id: str,
-) -> None:
-    """Send mock tool events to the frontend for segment rendering development.
-
-    Simulates a realistic agent turn:
-      reasoning → tool1 → tool2 → tool3 → then LLM produces final text.
-    Then the real LLM streaming continues after this function returns.
-
-    TODO: Remove when real tool execution is wired in.
-    """
-    import asyncio
-
-    # 1. Reasoning — initial thinking
+async def _emit_mock_tool_events(push, turn_id: str) -> None:
+    """Mock tool events for non-claude mode debugging. TODO: remove."""
     reasoning_text = "让我分析一下用户的需求，需要先搜索相关文件，再查看具体实现，最后验证一下配置..."
     for chunk in _split_chunks(reasoning_text, 8):
-        _try_push(ws_holder, {"type": "model_delta", "channel": "reasoning", "text": chunk, "turnId": turn_id})
+        push({"type": "model_delta", "channel": "reasoning", "text": chunk, "turnId": turn_id})
         await asyncio.sleep(0.02)
     await asyncio.sleep(0.1)
-
-    # ── Tool 1: search_files ──
-    await _mock_one_tool(ws_holder, turn_id, "call_search_1", "search_files",
-                         '{"query": "vera-agent", "max_results": 5}',
-                         True,
-                         "Found 3 files:\n1. backend/api/routers/chat.py\n2. frontend/src/pages/EditAgent/useChatSocket.ts\n3. backend/agent/chat.py")
-    await asyncio.sleep(0.1)
-
-    # More reasoning between tools
-    more_reasoning = "找到了几个关键文件，让我看看 chat.py 的具体实现..."
-    for chunk in _split_chunks(more_reasoning, 8):
-        _try_push(ws_holder, {"type": "model_delta", "channel": "reasoning", "text": chunk, "turnId": turn_id})
-        await asyncio.sleep(0.02)
-    await asyncio.sleep(0.05)
-
-    # ── Tool 2: read_file ──
-    await _mock_one_tool(ws_holder, turn_id, "call_read_1", "read_file",
-                         '{"path": "backend/api/routers/chat.py"}',
-                         True,
-                         "# chat.py — WebSocket endpoint\n\nasync def chat_websocket(ws, agent_id, session_id):\n    await ws.accept()\n    # ... 120 lines omitted")
-    await asyncio.sleep(0.1)
-
-    # More reasoning
-    more_reasoning2 = "已经了解了代码结构，再检查一下模型配置..."
-    for chunk in _split_chunks(more_reasoning2, 8):
-        _try_push(ws_holder, {"type": "model_delta", "channel": "reasoning", "text": chunk, "turnId": turn_id})
-        await asyncio.sleep(0.02)
-    await asyncio.sleep(0.05)
-
-    # ── Tool 3: check_config (simulated failure) ──
-    await _mock_one_tool(ws_holder, turn_id, "call_config_1", "check_model_config",
-                         '{"model_id": "deepseek-v4-pro"}',
-                         False,
-                         "Error: Model 'deepseek-v4-pro' is not enabled.\nPlease check ModelConfig table.")
+    await _mock_one_tool(push, turn_id, "call_search_1", "search_files",
+                         '{"query": "vera-agent", "max_results": 5}', True,
+                         "Found 3 files:\n1. backend/api/routers/chat.py\n2. frontend/src/pages/EditAgent/useChatSocket.ts")
     await asyncio.sleep(0.1)
 
 
-async def _mock_one_tool(
-    ws_holder: list[WebSocket | None],
-    turn_id: str,
-    call_id: str,
-    name: str,
-    args_text: str,
-    ok: bool,
-    output: str,
-) -> None:
-    """Emit a single tool call lifecycle: preparing → args streaming → intent → result."""
-    import asyncio
-
-    # preparing
-    _try_push(ws_holder, {
-        "type": "tool.preparing", "turnId": turn_id,
-        "callId": call_id, "name": name,
-    })
-
-    # Stream args
+async def _mock_one_tool(push, turn_id, call_id, name, args_text, ok, output):
+    push({"type": "tool.preparing", "turnId": turn_id, "callId": call_id, "name": name})
     for chunk in _split_chunks(args_text, 6):
-        _try_push(ws_holder, {"type": "model_delta", "channel": "tool_args", "text": chunk, "turnId": turn_id})
+        push({"type": "model_delta", "channel": "tool_args", "text": chunk, "turnId": turn_id})
         await asyncio.sleep(0.015)
-
-    # intent
-    _try_push(ws_holder, {
-        "type": "tool.intent", "turnId": turn_id,
-        "callId": call_id, "name": name, "args": args_text,
-    })
-
-    # Execution delay
+    push({"type": "tool.intent", "turnId": turn_id, "callId": call_id, "name": name, "args": args_text})
     await asyncio.sleep(0.4 + len(output) * 0.001)
-
-    # result
-    _try_push(ws_holder, {
-        "type": "tool.result", "turnId": turn_id,
-        "callId": call_id, "ok": ok, "output": output,
-    })
+    push({"type": "tool.result", "turnId": turn_id, "callId": call_id, "ok": ok, "output": output})
 
 
 def _split_chunks(text: str, size: int) -> list[str]:
-    """Split text into chunks of given size."""
     return [text[i:i + size] for i in range(0, len(text), size)]
 
 
-def _try_push(ws_holder: list[WebSocket | None], data: dict) -> None:
-    ws = ws_holder[0]
-    if ws is None:
-        return
+def _try_send(ws: WebSocket, data: dict) -> None:
+    """Fire-and-forget send — never blocks the caller."""
     try:
         asyncio.create_task(_safe_send(ws, data))
     except Exception:
@@ -714,6 +611,26 @@ async def _safe_send(ws: WebSocket, data: dict) -> None:
         await ws.send_json(data)
     except Exception:
         pass
+
+
+async def _maybe_rename_session(session_id: str, first_msg: str) -> str | None:
+    """Rename a session from its first user message, if still default-named."""
+    try:
+        async with async_session() as db:
+            session = (
+                await db.execute(select(M.Session).where(M.Session.id == session_id))
+            ).scalar_one_or_none()
+            if session is None:
+                return None
+            if session.name and session.name != "新会话":
+                return None
+            new_name = first_msg.strip().replace("\n", " ")[:30] or "新会话"
+            session.name = new_name
+            await db.commit()
+            return new_name
+    except Exception as exc:
+        print(f"[chat] failed to auto-rename session: {exc}", flush=True)
+        return None
 
 
 async def _persist_message(session_id: str, role: str, content: str, reasoning: str | None = None, tool_calls: list[dict] | None = None, segments: list[dict] | None = None, duration_ms: int | None = None) -> None:
@@ -736,32 +653,14 @@ async def _persist_message(session_id: str, role: str, content: str, reasoning: 
 
 
 async def _scan_workspace(adapter, turn_id: str) -> list[dict]:
-    """Scan only the output/ subdirectory for user-visible generated files.
-
-    Config files (.claude/, CLAUDE.md) are ignored because they live above output/.
-    """
-    import os as _os
+    """Scan the workspace root for user-generated files (any location,
+    excluding .claude/ and CLAUDE.md)."""
+    from agent_runtime.claude.config import scan_generated_files
     client = getattr(adapter, 'client', None)
     cwd = getattr(client, 'cwd', None) if client else None
-    if not cwd or not _os.path.isdir(cwd):
+    if not cwd or not os.path.isdir(cwd):
         return []
-    output_dir = _os.path.join(cwd, "output")
-    if not _os.path.isdir(output_dir):
-        _os.makedirs(output_dir, exist_ok=True)
-        return []
-    files = []
-    for root, dirs, filenames in _os.walk(output_dir):
-        for name in filenames:
-            if name.startswith('.'):
-                continue
-            full = _os.path.join(root, name)
-            try:
-                size = _os.path.getsize(full)
-                rel = _os.path.relpath(full, output_dir)
-                files.append({"name": rel, "path": rel, "size": size})
-            except OSError:
-                pass
-    return files
+    return scan_generated_files(cwd)
 
 
 async def _send_error(ws: WebSocket, message: str) -> None:

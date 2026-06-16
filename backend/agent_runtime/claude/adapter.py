@@ -30,18 +30,35 @@ class ClaudeAgentAdapter(AgentAdapter):
                 client, is_new = await pool.acquire(self.session_id)
             except PoolFullError:
                 raise PoolFullError("请求人数太多，请稍后重试")
-            if is_new or not client.is_alive():
-                await client.start(config)
-            elif client._session_id != self.session_id:
-                # Reused from different session — restart with new config
-                await client.close()
-                await client.start(config)
+            # Stash ref BEFORE start so close() can clean up even if start is
+            # cancelled mid-way (otherwise the acquired container leaks).
             self._pool_client = client
+            try:
+                if is_new or not client.is_alive():
+                    await client.start(config)
+                elif client._session_id != self.session_id:
+                    await client.close()
+                    await client.start(config)
+            except BaseException:
+                # start failed or cancelled — release the container
+                try:
+                    await client.close()
+                except Exception:
+                    pass
+                self._pool_client = None
+                raise
             return client  # type: ignore[return-value]
         else:
             from agent_runtime.claude.client import ClaudeAgentClient
             client = ClaudeAgentClient()
-            await client.start(config)
+            try:
+                await client.start(config)
+            except BaseException:
+                try:
+                    await client.close()
+                except Exception:
+                    pass
+                raise
             return client  # type: ignore[return-value]
 
     async def close(self) -> None:

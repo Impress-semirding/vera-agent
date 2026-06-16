@@ -144,37 +144,8 @@ from fastapi.responses import FileResponse, JSONResponse
 
 @router.get("/files/{session_id}")
 async def list_files(session_id: str, user: str = Query("current-user")):
-    """List generated files in the session workspace output/ directory."""
-    from agent_runtime.claude.config import _WORKSPACE_BASE
-    from sqlalchemy import select
-    from api.models import models as M
-
-    async with async_session() as db:
-        session = (await db.execute(select(M.Session).where(M.Session.id == session_id))).scalar_one_or_none()
-        if session is None:
-            raise HTTPException(status_code=404, detail="会话不存在")
-        cwd = _os.path.join(_WORKSPACE_BASE, session.agent_id, user, session_id, "output")
-    files = []
-    if _os.path.isdir(cwd):
-        for root, dirs, filenames in _os.walk(cwd):
-            for name in filenames:
-                if name.startswith('.'):
-                    continue
-                full = _os.path.join(root, name)
-                try:
-                    size = _os.path.getsize(full)
-                    rel = _os.path.relpath(full, cwd)
-                    files.append({"name": rel, "path": rel, "size": size})
-                except OSError:
-                    pass
-    return files
-
-
-@router.get("/files/{session_id}/download")
-async def download_file(session_id: str, path: str = Query(...), user: str = Query("current-user")):
-    """Download a generated file from the session workspace."""
-    # Reconstruct workspace path (same logic as config.py)
-    from agent_runtime.claude.config import _WORKSPACE_BASE
+    """List generated files in the session workspace (any location, excluding config)."""
+    from agent_runtime.claude.config import _WORKSPACE_BASE, scan_generated_files
     from sqlalchemy import select
     from api.models import models as M
 
@@ -183,12 +154,24 @@ async def download_file(session_id: str, path: str = Query(...), user: str = Que
         if session is None:
             raise HTTPException(status_code=404, detail="会话不存在")
         cwd = _os.path.join(_WORKSPACE_BASE, session.agent_id, user, session_id)
-    output_dir = _os.path.join(cwd, "output")
-    safe_path = _os.path.normpath(path).lstrip("/\\")
-    fp = _os.path.join(output_dir, safe_path)
-    # Prevent path traversal
-    if not _os.path.realpath(fp).startswith(_os.path.realpath(output_dir) + _os.sep):
+    return scan_generated_files(cwd)
+
+
+@router.get("/files/{session_id}/download")
+async def download_file(session_id: str, path: str = Query(...), user: str = Query("current-user")):
+    """Download a generated file from the session workspace."""
+    from agent_runtime.claude.config import _WORKSPACE_BASE, is_safe_workspace_path
+    from sqlalchemy import select
+    from api.models import models as M
+
+    async with async_session() as db:
+        session = (await db.execute(select(M.Session).where(M.Session.id == session_id))).scalar_one_or_none()
+        if session is None:
+            raise HTTPException(status_code=404, detail="会话不存在")
+        cwd = _os.path.join(_WORKSPACE_BASE, session.agent_id, user, session_id)
+    fp = is_safe_workspace_path(cwd, path)
+    if fp is None:
         raise HTTPException(status_code=403, detail="路径非法")
     if not _os.path.isfile(fp):
-        raise HTTPException(status_code=404, detail=f"文件不存在: {safe_path}")
-    return FileResponse(fp, filename=_os.path.basename(safe_path))
+        raise HTTPException(status_code=404, detail=f"文件不存在: {path}")
+    return FileResponse(fp, filename=_os.path.basename(path))

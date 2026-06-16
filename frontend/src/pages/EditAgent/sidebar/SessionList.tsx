@@ -1,5 +1,6 @@
-import { Popconfirm } from 'antd';
-import { PlusOutlined, DeleteOutlined } from '@ant-design/icons';
+import { useState } from 'react';
+import { Popconfirm, Input } from 'antd';
+import { PlusOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import s from '../index.module.less';
 
 interface Session {
@@ -13,9 +14,28 @@ interface SessionListProps {
   onNew: () => void;
   onSelect: (id: string) => void;
   onDelete: (id: string) => void;
+  onRename: (id: string, name: string) => void;
 }
 
-export default function SessionList({ sessions, onNew, onSelect, onDelete }: SessionListProps) {
+export default function SessionList({ sessions, onNew, onSelect, onDelete, onRename }: SessionListProps) {
+  const [editingId, setEditingId] = useState<string | null>(null);
+  const [draft, setDraft] = useState('');
+
+  const startEdit = (e: React.MouseEvent, sess: Session) => {
+    e.stopPropagation();
+    setEditingId(sess.id);
+    setDraft(sess.name);
+  };
+
+  const commitEdit = () => {
+    if (editingId) {
+      const trimmed = draft.trim();
+      if (trimmed) onRename(editingId, trimmed);
+    }
+    setEditingId(null);
+    setDraft('');
+  };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
       <div style={{ padding: '10px 12px 4px' }}>
@@ -28,14 +48,35 @@ export default function SessionList({ sessions, onNew, onSelect, onDelete }: Ses
           <div
             key={sess.id}
             className={`${s.sessionItem} ${sess.active ? s.active : ''}`}
-            onClick={() => onSelect(sess.id)}
+            onClick={() => editingId !== sess.id && onSelect(sess.id)}
           >
-            <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
-              {sess.name}
-            </span>
-            <Popconfirm title="删除此会话？" onConfirm={(e) => { e?.stopPropagation(); onDelete(sess.id); }}>
-              <DeleteOutlined style={{ fontSize: 12, color: '#00000040' }} onClick={(e) => e.stopPropagation()} />
-            </Popconfirm>
+            {editingId === sess.id ? (
+              <Input
+                size="small"
+                autoFocus
+                value={draft}
+                onChange={(e) => setDraft(e.target.value)}
+                onPressEnter={commitEdit}
+                onBlur={commitEdit}
+                onClick={(e) => e.stopPropagation()}
+                style={{ flex: 1 }}
+              />
+            ) : (
+              <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+                {sess.name}
+              </span>
+            )}
+            {editingId !== sess.id && (
+              <>
+                <EditOutlined
+                  style={{ fontSize: 12, color: '#00000040', flexShrink: 0 }}
+                  onClick={(e) => startEdit(e, sess)}
+                />
+                <Popconfirm title="删除此会话？" onConfirm={(e) => { e?.stopPropagation(); onDelete(sess.id); }}>
+                  <DeleteOutlined style={{ fontSize: 12, color: '#00000040', flexShrink: 0 }} onClick={(e) => e.stopPropagation()} />
+                </Popconfirm>
+              </>
+            )}
           </div>
         ))}
       </div>

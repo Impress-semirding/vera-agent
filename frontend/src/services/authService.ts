@@ -9,4 +9,15 @@ export const authService = {
 
   /** Confirm the persisted identity is still valid server-side. */
   me: () => api.get<any, ApiResponse<AuthUser>>('/auth/me'),
+
+  // ─── DingTalk OAuth ──────────────────────────────────────
+  /** Get DingTalk authorize URL + state (enabled=false if unconfigured). */
+  dingtalkConfig: () =>
+    api.get<any, ApiResponse<{ enabled: boolean; authorizeUrl: string | null; state: string | null }>>(
+      '/auth/dingtalk/config',
+    ),
+
+  /** Exchange a DingTalk authCode for a Vera user. */
+  dingtalkLogin: (authCode: string, state: string) =>
+    api.post<any, ApiResponse<AuthUser>>('/auth/dingtalk/login', { authCode, state }),
 };

@@ -302,7 +302,9 @@ class ILinkClient:
 
     async def _ensure_client(self) -> httpx.AsyncClient:
         if self._client is None:
-            self._client = httpx.AsyncClient(timeout=httpx.Timeout(60.0))
+            # trust_env=False: iLink is a domestic Tencent service — bypass any
+            # SOCKS/HTTP proxy env vars (which are typically for VPN/foreign APIs).
+            self._client = httpx.AsyncClient(timeout=httpx.Timeout(60.0), trust_env=False)
         return self._client
 
     async def close(self) -> None:
@@ -350,7 +352,7 @@ class ILinkClient:
     @staticmethod
     async def fetch_qrcode() -> QRCodeResponse:
         """Fetch a new QR code for WeChat login (no auth needed)."""
-        async with httpx.AsyncClient() as client:
+        async with httpx.AsyncClient(trust_env=False) as client:
             resp = await client.get(QRCODE_URL)
             if resp.status_code != 200:
                 raise ILinkError(f"QR code fetch failed: HTTP {resp.status_code}")
@@ -372,7 +374,7 @@ class ILinkClient:
         """
         url = QRCODE_STATUS_URL + qrcode
 
-        async with httpx.AsyncClient(timeout=httpx.Timeout(45.0)) as client:
+        async with httpx.AsyncClient(timeout=httpx.Timeout(45.0), trust_env=False) as client:
             while True:
                 if cancel_event and cancel_event.is_set():
                     raise ILinkError("Login cancelled")

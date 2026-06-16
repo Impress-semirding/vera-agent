@@ -15,6 +15,10 @@ export const sessionService = {
   remove: (sessionId: string) =>
     api.delete<any, ApiResponse<void>>(`/sessions/${sessionId}`),
 
+  /** Rename a session. */
+  rename: (sessionId: string, name: string) =>
+    api.patch<any, ApiResponse<Session>>(`/sessions/${sessionId}`, { name }),
+
   /** Load the message history of a session. */
   messages: (sessionId: string) =>
     api.get<any, ApiResponse<ChatMessage[]>>(`/sessions/${sessionId}/messages`),

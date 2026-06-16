@@ -1,5 +1,5 @@
 import axios from 'axios';
-import { clearUser, getUserName } from './authUser';
+import { clearUser, getToken, getUserName } from './authUser';
 
 const api = axios.create({
   baseURL: '/api/v1',
@@ -9,10 +9,10 @@ const api = axios.create({
   // FormData uploads. A hardcoded json header here would break file uploads.
 });
 
-// Attach the logged-in user identity to every request (header-based auth).
-// Percent-encode the value: HTTP header bytes are decoded as latin-1, so raw
-// non-ASCII names (Chinese) would arrive mojibake'd. The backend unquotes it.
+// Attach the signed session token and X-User identity to every request.
 api.interceptors.request.use((config) => {
+  const token = getToken();
+  if (token) config.headers['Authorization'] = `Bearer ${token}`;
   const name = getUserName();
   if (name) config.headers['X-User'] = encodeURIComponent(name);
   return config;

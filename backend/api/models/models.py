@@ -123,6 +123,9 @@ class User(Base):
     password_hash: Mapped[str] = mapped_column(Text, nullable=False)
     salt: Mapped[str] = mapped_column(Text, nullable=False)
     avatar_url: Mapped[str | None] = mapped_column(String(500))
+    dingtalk_union_id: Mapped[str | None] = mapped_column(String(128))  # for DingTalk SSO users
+    is_superuser: Mapped[bool] = mapped_column(Boolean, default=False)
+    max_concurrent_turns: Mapped[int | None] = mapped_column(Integer)  # per-user cap; None=use env default
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

@@ -12,13 +12,17 @@ export interface AuthUser {
   name: string;
   email: string;
   avatarUrl?: string;
+  isSuperuser?: boolean;
+  maxConcurrentTurns?: number | null;
+  token?: string;
 }
 
-const KEY = 'reasonix.user';
+const USER_KEY = 'reasonix.user';
+const TOKEN_KEY = 'reasonix.token';
 
 export function getUser(): AuthUser | null {
   try {
-    const raw = localStorage.getItem(KEY);
+    const raw = localStorage.getItem(USER_KEY);
     return raw ? (JSON.parse(raw) as AuthUser) : null;
   } catch {
     return null;
@@ -29,10 +33,20 @@ export function getUserName(): string | null {
   return getUser()?.name ?? null;
 }
 
+export function getToken(): string | null {
+  return localStorage.getItem(TOKEN_KEY) || getUser()?.token || null;
+}
+
 export function setUser(user: AuthUser): void {
-  localStorage.setItem(KEY, JSON.stringify(user));
+  localStorage.setItem(USER_KEY, JSON.stringify(user));
+  if (user.token) localStorage.setItem(TOKEN_KEY, user.token);
+}
+
+export function setToken(token: string): void {
+  localStorage.setItem(TOKEN_KEY, token);
 }
 
 export function clearUser(): void {
-  localStorage.removeItem(KEY);
+  localStorage.removeItem(USER_KEY);
+  localStorage.removeItem(TOKEN_KEY);
 }

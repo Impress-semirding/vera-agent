@@ -25,5 +25,15 @@ async def seed(db: AsyncSession) -> None:
         for name, email in _SEED_USERS:
             password = _SEED_USER_PASSWORDS.get(name, "123456")
             pw_hash, salt = hash_password(password)
-            db.add(User(id=uuid.uuid4().hex, name=name, email=email, password_hash=pw_hash, salt=salt))
+            db.add(User(
+                id=uuid.uuid4().hex, name=name, email=email,
+                password_hash=pw_hash, salt=salt,
+                is_superuser=(name == "admin"),  # seeded admin is superuser
+            ))
         await db.commit()
+    else:
+        # Existing DB: ensure the "admin" user is promoted to superuser
+        admin = (await db.execute(select(User).where(User.name == "admin"))).scalar_one_or_none()
+        if admin is not None and not admin.is_superuser:
+            admin.is_superuser = True
+            await db.commit()

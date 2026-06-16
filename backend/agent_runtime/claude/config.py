@@ -159,6 +159,53 @@ def _write_file(path: str, content: str) -> None:
         f.write(content)
 
 
+# Files/dirs that are agent config, not user-generated artifacts.
+_EXCLUDE_DIRS = {".claude"}
+_EXCLUDE_FILES = {"CLAUDE.md"}
+
+
+def scan_generated_files(cwd: str) -> list[dict]:
+    """List user-generated files under the workspace root.
+
+    Scans the whole workspace (not just output/) so files show up regardless
+    of where the agent wrote them.  Excludes hidden dirs/files (.claude,
+    .claude-persist, .git, ...) and CLAUDE.md (agent config).
+    """
+    import os
+    if not os.path.isdir(cwd):
+        return []
+    files = []
+    for root, dirs, filenames in os.walk(cwd):
+        # Prune ALL hidden directories (.claude, .claude-persist, .git, ...)
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for name in filenames:
+            if name.startswith(".") or name in _EXCLUDE_FILES:
+                continue
+            full = os.path.join(root, name)
+            try:
+                size = os.path.getsize(full)
+                rel = os.path.relpath(full, cwd)
+                files.append({"name": rel, "path": rel, "size": size})
+            except OSError:
+                pass
+    return files
+
+
+def is_safe_workspace_path(cwd: str, rel_path: str) -> str | None:
+    """Resolve a relative path under cwd, blocking traversal and hidden/config
+    paths. Returns the absolute path if safe, else None."""
+    import os
+    safe = os.path.normpath(rel_path).lstrip("/\\")
+    parts = safe.split(os.sep)
+    # Block any hidden path component (.claude, .claude-persist, ...) and CLAUDE.md
+    if any(p.startswith(".") for p in parts) or safe in _EXCLUDE_FILES:
+        return None
+    fp = os.path.join(cwd, safe)
+    if not os.path.realpath(fp).startswith(os.path.realpath(cwd) + os.sep):
+        return None
+    return fp
+
+
 def _json_loads_list(raw: str | None) -> list:
     if not raw:
         return []

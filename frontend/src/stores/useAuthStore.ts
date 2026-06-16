@@ -9,6 +9,7 @@ interface AuthStore {
   user: AuthUser | null;
   status: Status;
   login: (identifier: string, password: string) => Promise<void>;
+  dingtalkLogin: (authCode: string, state: string) => Promise<void>;
   logout: () => void;
   /** Validate the persisted identity once on app start. */
   bootstrap: () => Promise<void>;
@@ -22,6 +23,12 @@ export const useAuthStore = create<AuthStore>((set) => ({
 
   login: async (identifier, password) => {
     const res = await authService.login(identifier, password);
+    setUser(res.data);
+    set({ user: res.data, status: 'authed' });
+  },
+
+  dingtalkLogin: async (authCode, state) => {
+    const res = await authService.dingtalkLogin(authCode, state);
     setUser(res.data);
     set({ user: res.data, status: 'authed' });
   },
