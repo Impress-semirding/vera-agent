@@ -56,3 +56,7 @@ async def _migrate(conn) -> None:
         await conn.execute(text("ALTER TABLE users ADD COLUMN is_superuser BOOLEAN DEFAULT 0"))
     if "max_concurrent_turns" not in user_cols:
         await conn.execute(text("ALTER TABLE users ADD COLUMN max_concurrent_turns INTEGER"))
+    if "totp_secret" not in user_cols:
+        await conn.execute(text("ALTER TABLE users ADD COLUMN totp_secret VARCHAR(64)"))
+    if "totp_enabled" not in user_cols:
+        await conn.execute(text("ALTER TABLE users ADD COLUMN totp_enabled BOOLEAN DEFAULT 0"))

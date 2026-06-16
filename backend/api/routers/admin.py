@@ -41,6 +41,7 @@ def _user_admin_out(u: M.User) -> dict:
         "avatarUrl": u.avatar_url,
         "dingtalkUnionId": u.dingtalk_union_id,
         "isSuperuser": bool(u.is_superuser),
+        "isPasswordUser": not bool(u.dingtalk_union_id),
         "maxConcurrentTurns": u.max_concurrent_turns,
     }
 

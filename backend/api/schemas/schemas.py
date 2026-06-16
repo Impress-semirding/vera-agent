@@ -32,6 +32,7 @@ class PaginatedData(BaseModel):
 class LoginRequest(BaseModel):
     identifier: str  # user name or email
     password: str
+    totpCode: str | None = None  # TOTP 6-digit code (if user has 2FA enabled)
 
 
 class AuthUser(BaseModel):

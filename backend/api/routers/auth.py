@@ -17,7 +17,7 @@ from api.api_response import current_user, ok, sign_session_token
 from api.database import get_db
 from api.models import models as M
 from api.schemas import schemas as S
-from api.util import verify_password
+from api.util import verify_password, generate_totp_secret, verify_totp, totp_qrcode_url
 
 router = APIRouter(tags=["auth"])
 
@@ -30,6 +30,7 @@ def _user_out(u: M.User) -> dict:
         "avatarUrl": u.avatar_url,
         "isSuperuser": bool(u.is_superuser),
         "maxConcurrentTurns": u.max_concurrent_turns,
+        "isPasswordUser": not bool(u.dingtalk_union_id),  # only password users can set TOTP
     }
 
 
@@ -46,6 +47,16 @@ async def login(data: S.LoginRequest, db: AsyncSession = Depends(get_db)):
     # Same message for "no such user" and "wrong password" — avoid enumeration.
     if user is None or not verify_password(data.password, user.salt, user.password_hash):
         raise HTTPException(status_code=401, detail="用户不存在或密码错误")
+
+    # TOTP second factor
+    if user.totp_enabled:
+        if not user.totp_secret:
+            raise HTTPException(status_code=500, detail="二次验证未正确配置，请联系管理员")
+        if not data.totpCode:
+            return ok({"requireTotp": True, "message": "请输入二次验证码"})
+        if not verify_totp(user.totp_secret, data.totpCode):
+            raise HTTPException(status_code=401, detail="二次验证码错误")
+
     token = sign_session_token(user.name)
     return ok({**_user_out(user), "token": token})
 
@@ -78,6 +89,99 @@ async def userinfo(
     if row is None:
         raise HTTPException(status_code=404, detail="用户不存在")
     return ok(_user_out(row))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# TOTP setup (self-service — the authenticated user manages their own 2FA)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@router.get("/auth/totp/setup")
+async def totp_setup(
+    db: AsyncSession = Depends(get_db),
+    user_name: str = Depends(current_user),
+):
+    """Generate a new TOTP secret and return the QR code for scanning.
+
+    If TOTP is already enabled, returns ``{alreadyEnabled: true}`` without
+    overwriting the existing secret — protects an active 2FA from being
+    accidentally broken by re-entering setup.
+    """
+    row = (
+        await db.execute(select(M.User).where(M.User.name == user_name))
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+
+    if row.totp_enabled:
+        return ok({"alreadyEnabled": True, "message": "二次验证已开启"})
+
+
+    secret = generate_totp_secret()
+    row.totp_secret = secret
+    row.totp_enabled = False  # stays disabled until verified
+    await db.commit()
+
+    qr_url = totp_qrcode_url(row.name, secret)
+    import io, base64 as b64
+    import qrcode as qrcode_lib
+    img = qrcode_lib.make(qr_url, box_size=8, border=2)
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    qr_img = b64.b64encode(buf.getvalue()).decode()
+    return ok({"secret": secret, "qrcodeUrl": qr_url, "qrcodeImg": qr_img})
+
+
+@router.post("/auth/totp/verify")
+async def totp_verify(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user_name: str = Depends(current_user),
+):
+    """Verify the TOTP setup by checking a code, then enable 2FA."""
+    row = (
+        await db.execute(select(M.User).where(M.User.name == user_name))
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if not row.totp_secret:
+        raise HTTPException(status_code=400, detail="请先调用 /auth/totp/setup 生成密钥")
+
+    code = str(body.get("code") or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="缺少 code")
+    if not verify_totp(row.totp_secret, code):
+        raise HTTPException(status_code=400, detail="验证码错误")
+    row.totp_enabled = True
+    await db.commit()
+    return ok({"enabled": True, "message": "二次验证已开启"})
+
+
+@router.post("/auth/totp/disable")
+async def totp_disable(
+    body: dict,
+    db: AsyncSession = Depends(get_db),
+    user_name: str = Depends(current_user),
+):
+    """Disable TOTP 2FA — must verify a valid code first to prove access."""
+    row = (
+        await db.execute(select(M.User).where(M.User.name == user_name))
+    ).scalar_one_or_none()
+    if row is None:
+        raise HTTPException(status_code=404, detail="用户不存在")
+    if not row.totp_enabled or not row.totp_secret:
+        raise HTTPException(status_code=400, detail="二次验证未开启")
+
+    code = str(body.get("code") or "").strip()
+    if not code:
+        raise HTTPException(status_code=400, detail="缺少 code")
+    if not verify_totp(row.totp_secret, code):
+        raise HTTPException(status_code=400, detail="验证码错误")
+
+    row.totp_secret = None
+    row.totp_enabled = False
+    await db.commit()
+    return ok({"enabled": False, "message": "二次验证已关闭"})
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -21,10 +21,16 @@ export const useAuthStore = create<AuthStore>((set) => ({
   // spinner, avoiding a redirect flash); 'guest' when there's nothing stored.
   status: getUser() ? 'unknown' : 'guest',
 
-  login: async (identifier, password) => {
-    const res = await authService.login(identifier, password);
+  login: async (identifier, password, totpCode?: string) => {
+    const payload: any = { identifier, password };
+    if (totpCode) payload.totpCode = totpCode;
+    const res = await authService.loginRaw(payload);
+    if (res.data?.requireTotp) {
+      return res.data;  // caller handles TOTP prompt
+    }
     setUser(res.data);
     set({ user: res.data, status: 'authed' });
+    return res.data;
   },
 
   dingtalkLogin: async (authCode, state) => {

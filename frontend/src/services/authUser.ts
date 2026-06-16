@@ -14,6 +14,7 @@ export interface AuthUser {
   avatarUrl?: string;
   isSuperuser?: boolean;
   maxConcurrentTurns?: number | null;
+  isPasswordUser?: boolean;
   token?: string;
 }
 

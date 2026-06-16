@@ -12,11 +12,11 @@ export default function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [dingtalkEnabled, setDingtalkEnabled] = useState(false);
+  const [totpPending, setTotpPending] = useState({ identifier: '', password: '' });
+  const [totpCode, setTotpCode] = useState('');
 
-  // Where to go after login (the page the user was trying to reach).
   const from = (location.state as { from?: string } | null)?.from ?? '/';
 
-  // Probe whether DingTalk login is configured (hides button if not).
   useEffect(() => {
     authService.dingtalkConfig().then((res: any) => {
       setDingtalkEnabled(!!res.data?.enabled);
@@ -27,13 +27,33 @@ export default function LoginPage() {
     setError(null);
     setSubmitting(true);
     try {
-      await login(values.identifier, values.password);
+      const res: any = await login(values.identifier, values.password);
+      if (res?.requireTotp) {
+        setTotpPending(values);
+        return;
+      }
       navigate(from, { replace: true });
     } catch (err: unknown) {
       const msg =
         (err as { response?: { data?: { message?: string } } })?.response?.data?.message ||
         '登录失败，请重试';
       setError(msg);
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleTotpSubmit = async () => {
+    if (!totpCode || totpCode.length !== 6) return;
+    setError(null);
+    setSubmitting(true);
+    try {
+      await login(totpPending.identifier, totpPending.password, totpCode);
+      navigate(from, { replace: true });
+    } catch (err: unknown) {
+      setError(
+        (err as any)?.response?.data?.message || '验证失败',
+      );
     } finally {
       setSubmitting(false);
     }
@@ -68,7 +88,32 @@ export default function LoginPage() {
 
         {error ? <Alert type="error" message={error} showIcon style={{ marginBottom: 16 }} /> : null}
 
-        <Form layout="vertical" onFinish={handleFinish} preserve={false}>
+        {totpPending.identifier ? (
+          /* TOTP second-factor */
+          <>
+            <p style={{ textAlign: 'center', color: '#00000073', fontSize: 13, marginBottom: 12 }}>
+              已通过密码验证，请输入 Google Authenticator 中的 6 位验证码
+            </p>
+            <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
+              <Input
+                maxLength={6}
+                value={totpCode}
+                onChange={(e) => setTotpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                onPressEnter={handleTotpSubmit}
+                placeholder="000000"
+                style={{ textAlign: 'center', fontSize: 18, letterSpacing: 4 }}
+                autoFocus
+              />
+            </div>
+            <Button type="primary" block loading={submitting} onClick={handleTotpSubmit} disabled={totpCode.length !== 6}>
+              验证
+            </Button>
+            <Button type="link" block onClick={() => { setTotpPending({ identifier: '', password: '' }); setTotpCode(''); }}>
+              返回
+            </Button>
+          </>
+        ) : (
+          <Form layout="vertical" onFinish={handleFinish} preserve={false}>
           <Form.Item label="用户名 / 邮箱" name="identifier" rules={[{ required: true, message: '请输入用户名或邮箱' }]}>
             <Input placeholder="请输入用户名或邮箱" autoComplete="username" />
           </Form.Item>
@@ -76,15 +121,15 @@ export default function LoginPage() {
             <Input.Password placeholder="请输入密码" autoComplete="current-password" />
           </Form.Item>
           <Button type="primary" htmlType="submit" block loading={submitting}>登录</Button>
+          {dingtalkEnabled && (
+            <>
+              <Divider style={{ margin: '16px 0', fontSize: 12, color: '#00000040' }}>或</Divider>
+              <Button block size="large" onClick={handleDingtalk} style={{ color: '#1677ff', borderColor: '#1677ff' }}>
+                钉钉登录
+              </Button>
+            </>
+          )}
         </Form>
-
-        {dingtalkEnabled && (
-          <>
-            <Divider style={{ margin: '16px 0', fontSize: 12, color: '#00000040' }}>或</Divider>
-            <Button block size="large" onClick={handleDingtalk} style={{ color: '#1677ff', borderColor: '#1677ff' }}>
-              钉钉登录
-            </Button>
-          </>
         )}
       </div>
     </div>
