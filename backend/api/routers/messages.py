@@ -14,7 +14,7 @@ from __future__ import annotations
 import json
 import os as _os
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, UploadFile, File
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -136,6 +136,47 @@ async def send_message(
     await db.commit()
     await db.refresh(msg)
     return ok(_message_out(msg))
+
+
+# ═══════════════════════════════════════════════════════════════════════
+# File upload (OSS)
+# ═══════════════════════════════════════════════════════════════════════
+
+
+@router.post("/upload/{session_id}")
+async def upload_files(
+    session_id: str,
+    files: list[UploadFile] = File(...),
+    user: str = Depends(current_user),
+):
+    """Upload files to OSS for a chat session.
+
+    Max 10 files. Rejects video/audio. Returns ``{files: [{name, url, size}]}``.
+    """
+    from api.oss_client import upload_file, is_allowed, MAX_FILE_COUNT
+    from api.database import async_session as _as
+
+    async with _as() as db:
+        session = (await db.execute(select(M.Session).where(M.Session.id == session_id))).scalar_one_or_none()
+        if session is None:
+            raise HTTPException(status_code=404, detail="会话不存在")
+
+    if len(files) > MAX_FILE_COUNT:
+        raise HTTPException(status_code=400, detail=f"最多同时上传 {MAX_FILE_COUNT} 个文件")
+
+    result = []
+    for f in files:
+        ct = f.content_type or "application/octet-stream"
+        if not is_allowed(ct):
+            raise HTTPException(status_code=400, detail=f"不支持的文件类型: {f.filename} ({ct})")
+        content = await f.read()
+        try:
+            info = await upload_file(f.filename or "file", content, ct)
+            result.append(info)
+        except Exception as exc:
+            raise HTTPException(status_code=500, detail=f"上传 {f.filename} 失败: {exc}")
+
+    return ok({"files": result})
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -32,8 +32,10 @@ router = APIRouter(tags=["skills"])
 
 _ZIP_MEDIA = "application/zip"
 
-# Absolute path to the ``skills/`` directory (sibling of the DB ``db/`` dir).
-_SKILLS_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data", "skills")
+# Absolute path to the ``skills/`` directory (under VERA_DATA_DIR).
+_DATA_DIR = os.environ.get("VERA_DATA_DIR", os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))), "data"))
+_SKILLS_DIR = os.path.join(_DATA_DIR, "skills")
 
 
 def _skill_zip_path(skill_id: str) -> str:

@@ -59,7 +59,9 @@ async def _get_or_create_ilink(db: AsyncSession, agent_id: str) -> M.WeChatiLink
 def _sync_dir() -> str:
     """Directory for monitor sync buffers."""
     import os
-    d = os.path.join(os.path.dirname(__file__), "..", "..", "data", "wechat_sync")
+    _data = os.environ.get("VERA_DATA_DIR", os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data"))
+    d = os.path.join(_data, "wechat_sync")
     os.makedirs(d, exist_ok=True)
     return d
 

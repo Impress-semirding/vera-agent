@@ -23,7 +23,7 @@ import { sessionService } from '@/services/sessionService';
 import type { Agent } from '@/types/agent';
 import { useChatSocket } from './useChatSocket';
 import type { ChatMsg, Segment } from './useChatSocket';
-import { getUserName } from '@/services/authUser';
+import { getToken, getUserName } from '@/services/authUser';
 import ConfigNav from './sidebar/ConfigNav';
 import SessionList from './sidebar/SessionList';
 import BasicInfoPanel from './panels/BasicInfoPanel';
@@ -191,8 +191,8 @@ export default function EditAgentPage() {
       .catch(() => message.error('重置失败'));
   }, [sessionId, stop]);
 
-  const handleSend = () => {
-    const text = chatInput;
+  const handleSend = (overrideText?: string) => {
+    const text = overrideText ?? chatInput;
     if (!text.trim()) return;
     if (!sessionId) {
       // No session yet: create it + switch the route, but keep the text in the
@@ -426,7 +426,7 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
   hasSession: boolean;
   messages: ChatMsg[];
   streaming: boolean;
-  chatInput: string; onChatInputChange: (v: string) => void; onSend: () => void; onStop: () => void;
+  chatInput: string; onChatInputChange: (v: string) => void; onSend: (text?: string) => void; onStop: () => void;
   onClear: () => void; artifactOpen: boolean; artifactTab: 'browser' | 'file';
   artifacts: { name: string; path: string; size: number }[];
   onToggleArtifact: () => void; onArtifactTabChange: (t: 'browser' | 'file') => void;
@@ -596,32 +596,137 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
 
 // ─── Chat Input Area ─────────────────────────────
 function ChatInputArea({ value, onChange, onSend, onStop, streaming, large, sessionId, onResetContext }: {
-  value: string; onChange: (v: string) => void; onSend: () => void; onStop: () => void;
+  value: string; onChange: (v: string) => void; onSend: (text?: string) => void; onStop: () => void;
   streaming?: boolean; large?: boolean; sessionId?: string; onResetContext?: () => void;
 }) {
-  // Button logic:
-  //   streaming + input empty → show stop button
-  //   streaming + input has text → show send button (queue next message)
-  //   not streaming → show send button (normal)
   const inputHasText = value.trim().length > 0;
   const showStop = streaming && !inputHasText;
   const canSend = inputHasText;
 
+  // File upload state
+  const [uploadedFiles, setUploadedFiles] = useState<{ name: string; url: string; size: number }[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const inputRef = useRef<any>(null);
+
+  const doUpload = async (files: FileList | File[]) => {
+    if (!sessionId) return;
+    const list = Array.from(files).filter(f => {
+      const t = f.type;
+      if (t.startsWith('video/') || t.startsWith('audio/')) {
+        message.warning(`不支持视频/音频: ${f.name}`);
+        return false;
+      }
+      return true;
+    });
+    if (list.length === 0) return;
+
+    // Dedup against already-uploaded (not-yet-sent) files
+    const existingNames = new Set(uploadedFiles.map(f => f.name));
+    const deduped = list.filter(f => {
+      if (existingNames.has(f.name)) {
+        message.warning(`文件已存在: ${f.name}`);
+        return false;
+      }
+      return true;
+    });
+    if (deduped.length === 0) return;
+    if (uploadedFiles.length + deduped.length > 10) {
+      message.warning('最多同时上传 10 个文件');
+      return;
+    }
+
+    setUploading(true);
+    const fd = new FormData();
+    deduped.forEach(f => fd.append('files', f));
+    try {
+      const resp = await fetch(`/api/v1/upload/${sessionId}`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${getToken()}` },
+        body: fd,
+      });
+      const data = await resp.json();
+      if (data.code === 0 && data.data?.files) {
+        setUploadedFiles(prev => [...prev, ...data.data.files]);
+      } else {
+        message.error(data.message || '上传失败');
+      }
+    } catch { message.error('上传失败'); }
+    finally { setUploading(false); }
+  };
+
+  // Paste handler — support image paste
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    const imageFiles: File[] = [];
+    for (let i = 0; i < items.length; i++) {
+      const item = items[i];
+      if (item.kind === 'file') {
+        const f = item.getAsFile();
+        if (f) imageFiles.push(f);
+      }
+    }
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      doUpload(imageFiles);
+    }
+  };
+
+  const removeFile = (i: number) => {
+    setUploadedFiles(prev => prev.filter((_, idx) => idx !== i));
+  };
+
+  // Augment send to include file info. Pass final text directly to avoid
+  // React state batching race (onChange → onSend reads stale chatInput).
+  const handleSend = () => {
+    let finalText = value;
+    if (uploadedFiles.length > 0) {
+      const fileLines = uploadedFiles.map(f => `[${f.name}](${f.url})`).join('\n');
+      finalText = finalText ? `${fileLines}\n\n${finalText}` : fileLines;
+    }
+    if (!finalText.trim()) return;
+    setUploadedFiles([]);
+    onSend(finalText);
+  };
+
   return (
     <div style={{ flexShrink: 0, background: '#fff', borderTop: '1px solid #f0f0f0', padding: large ? 0 : '16px 24px' }}>
       <div style={{ maxWidth: large ? '100%' : 1152, margin: large ? undefined : '0 auto' }}>
+        {/* Uploaded file chips */}
+        {uploadedFiles.length > 0 && (
+          <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, padding: '0 16px 8px' }}>
+            {uploadedFiles.map((f, i) => (
+              <Tag key={i} closable onClose={() => removeFile(i)} style={{ margin: 0, maxWidth: 200, overflow: 'hidden', textOverflow: 'ellipsis' }}>
+                {f.name}
+              </Tag>
+            ))}
+          </div>
+        )}
         <div style={{ border: '1px solid #d9d9d9', borderRadius: 12, transition: 'all 0.2s' }}>
           <Input.TextArea
+            ref={inputRef}
             value={value}
             onChange={(e) => onChange(e.target.value)}
-            placeholder="发送消息…"
+            placeholder="发送消息…（支持粘贴图片）"
             autoSize={{ minRows: large ? 5 : 3, maxRows: 9 }}
             style={{ border: 'none', boxShadow: 'none', resize: 'none', padding: '12px 16px 4px', borderRadius: 12 }}
-            onPressEnter={(e) => { if (!e.shiftKey && canSend) { e.preventDefault(); onSend(); } }}
+            onPressEnter={(e) => { if (!e.shiftKey && canSend) { e.preventDefault(); handleSend(); } }}
+            onPaste={handlePaste}
           />
           <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 16px 10px' }}>
             <div style={{ display: 'flex', gap: 12, color: '#00000040', fontSize: 14, alignItems: 'center' }}>
-              <PaperClipOutlined style={{ cursor: 'pointer' }} />
+              <input
+                type="file"
+                multiple
+                accept="image/*,.pdf,.doc,.docx,.xls,.xlsx,.md,.sql,.txt,.csv"
+                onChange={(e) => { if (e.target.files) doUpload(e.target.files); e.target.value = ''; }}
+                style={{ display: 'none' }}
+                id="file-upload-input"
+              />
+              <label htmlFor="file-upload-input" style={{ cursor: 'pointer', display: 'flex', alignItems: 'center' }}>
+                <PaperClipOutlined />
+              </label>
+              {uploading && <span style={{ fontSize: 12 }}>上传中...</span>}
               {sessionId && onResetContext ? (
                 <Popconfirm title="清空上下文将重置工作区的 CLAUDE.md 和 skills，不删除聊天记录" onConfirm={onResetContext}>
                   <Button size="small" type="text" style={{ fontSize: 12, color: '#00000073', padding: '0 4px' }}>
@@ -631,22 +736,9 @@ function ChatInputArea({ value, onChange, onSend, onStop, streaming, large, sess
               ) : null}
             </div>
             {showStop ? (
-              <Button
-                danger
-                size="small"
-                icon={<StopOutlined />}
-                onClick={onStop}
-              >
-                停止
-              </Button>
+              <Button danger size="small" icon={<StopOutlined />} onClick={onStop}>停止</Button>
             ) : (
-              <Button
-                type="primary"
-                size="small"
-                icon={<SendOutlined />}
-                onClick={onSend}
-                disabled={!canSend}
-              >
+              <Button type="primary" size="small" icon={<SendOutlined />} onClick={handleSend} disabled={!canSend && uploadedFiles.length === 0}>
                 发送
               </Button>
             )}

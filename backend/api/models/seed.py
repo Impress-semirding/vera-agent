@@ -1,19 +1,28 @@
 """Seed database with sample data for development."""
 
+import os
 import uuid
 from sqlalchemy.ext.asyncio import AsyncSession
 from api.models.models import User
 from api.util import hash_password
 
-# Dev login account. Seeded only when the users table is empty.
-_SEED_USERS = [
-    ("admin", "admin@zhongan.com"),
-    ("demo", "demo@example.com"),
-]
-_SEED_USER_PASSWORDS = {
-    "admin": "123456",
-    "demo": "123456",
-}
+# ── Seed users from env (or hardcoded defaults) ─────────────────────────
+# Format: VERA_SEED_USERS=name:email:password,name:email:password,...
+# Default: admin/admin@zhongan.com/123456 + demo/demo@example.com/123456
+_DEFAULT = "admin:admin@zhongan.com:123456,demo:demo@example.com:123456"
+
+
+def _parse_seed_users() -> list[tuple[str, str, str]]:
+    raw = os.environ.get("VERA_SEED_USERS", _DEFAULT).strip()
+    users = []
+    for entry in raw.split(","):
+        entry = entry.strip()
+        if not entry:
+            continue
+        parts = entry.split(":", 2)
+        if len(parts) == 3:
+            users.append((parts[0].strip(), parts[1].strip(), parts[2].strip()))
+    return users
 
 
 async def seed(db: AsyncSession) -> None:
@@ -22,8 +31,7 @@ async def seed(db: AsyncSession) -> None:
     # ── Users (independent guard: runs even if agents already seeded) ──
     has_user = (await db.execute(select(User))).scalars().first()
     if has_user is None:
-        for name, email in _SEED_USERS:
-            password = _SEED_USER_PASSWORDS.get(name, "123456")
+        for name, email, password in _parse_seed_users():
             pw_hash, salt = hash_password(password)
             db.add(User(
                 id=uuid.uuid4().hex, name=name, email=email,

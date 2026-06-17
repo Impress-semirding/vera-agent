@@ -1,10 +1,13 @@
 """Database engine + session factory."""
 
+import os
+
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine, async_sessionmaker, AsyncSession
 from sqlalchemy.orm import DeclarativeBase
 
-DATABASE_URL = "sqlite+aiosqlite:///./data/db/reasonix.db"
+_data_dir = os.environ.get("VERA_DATA_DIR", os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "data"))
+DATABASE_URL = f"sqlite+aiosqlite:///{_data_dir}/db/reasonix.db"
 
 engine = create_async_engine(DATABASE_URL, echo=False)
 async_session = async_sessionmaker(engine, class_=AsyncSession, expire_on_commit=False)
@@ -20,6 +23,22 @@ async def get_db() -> AsyncSession:  # type: ignore[misc]
 
 
 async def init_db() -> None:
+    # Verify data dir is writable before doing anything
+    _db_dir = os.path.dirname(DATABASE_URL.replace("sqlite+aiosqlite:///", ""))
+    os.makedirs(_db_dir, exist_ok=True)
+    try:
+        probe = os.path.join(_db_dir, ".write_test")
+        with open(probe, "w") as f:
+            f.write("ok")
+        os.remove(probe)
+    except (OSError, PermissionError) as exc:
+        raise RuntimeError(
+            f"数据目录无写入权限: {_db_dir}\n"
+            f"请确认 uvicorn 进程用户对 VERA_DATA_DIR 有写权限: {_data_dir}\n"
+            f"  sudo chown -R <user> {_data_dir}\n"
+            f"原始错误: {exc}"
+        ) from exc
+
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
         await _migrate(conn)

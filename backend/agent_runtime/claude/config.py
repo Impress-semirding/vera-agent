@@ -28,10 +28,11 @@ _GLOBAL_CONSTRAINTS = """
 # - 不允许删除或修改 CLAUDE.md、.claude/ 目录下的内容
 """
 
-_WORKSPACE_BASE = os.environ.get("AGENT_WORKSPACE_BASE", os.path.join(
+_DATA_DIR = os.environ.get("VERA_DATA_DIR", os.path.join(
     os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
-    "data", "workspaces",
+    "data",
 ))
+_WORKSPACE_BASE = os.environ.get("AGENT_WORKSPACE_BASE", os.path.join(_DATA_DIR, "workspaces"))
 
 
 async def build_claude_config(
