@@ -11,8 +11,7 @@ echo "项目目录: $PROJECT_DIR"
 echo "日志目录: $LOG_DIR"
 echo ""
 
-# ── Backend ──────────────────────────────────────────────
-# Kill any existing backend on the target port first
+# ── Kill existing processes on target ports ──────────────
 function kill_port() {
     local p=$1
     local pid
@@ -23,9 +22,22 @@ function kill_port() {
 kill_port 18080
 kill_port 3000
 
+# ── Backend ──────────────────────────────────────────────
 cd "$PROJECT_DIR/backend"
+
+# Create venv + install deps on first run
+if [ ! -d ".venv" ]; then
+    echo "[0/2] 首次运行：创建虚拟环境 + 安装依赖 ..."
+    python3 -m venv .venv
+    source .venv/bin/activate
+    pip install -e .
+    pip install claude-agent-sdk
+else
+    source .venv/bin/activate
+fi
+
 echo "[1/2] 启动后端 (uvicorn :18080) ..."
-nohup python3 -m uvicorn api.main:app --host 0.0.0.0 --port 18080 \
+nohup python -m uvicorn api.main:app --host 0.0.0.0 --port 18080 \
     > "$LOG_DIR/backend.log" 2>&1 &
 BACKEND_PID=$!
 echo "  backend pid=$BACKEND_PID"
@@ -34,6 +46,11 @@ sleep 2
 
 # ── Frontend ─────────────────────────────────────────────
 cd "$PROJECT_DIR/frontend"
+if [ ! -d "node_modules" ]; then
+    echo "[0/2] 首次运行：安装前端依赖 ..."
+    npm install
+fi
+
 echo "[2/2] 启动前端 (vite :3000) ..."
 nohup npx vite --host 0.0.0.0 --port 3000 \
     > "$LOG_DIR/frontend.log" 2>&1 &
