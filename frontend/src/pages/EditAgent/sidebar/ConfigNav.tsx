@@ -18,6 +18,7 @@ const NAV_GROUPS = [
     items: [
       { key: 'tool', icon: 'fa-wrench', label: '工具配置' },
       { key: 'skill', icon: 'fa-puzzle-piece', label: '技能Skill' },
+      { key: 'schedule', icon: 'fa-clock-o', label: '定时任务' },
     ],
   },
   {

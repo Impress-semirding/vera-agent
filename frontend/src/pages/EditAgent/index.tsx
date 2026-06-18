@@ -29,6 +29,7 @@ import SessionList from './sidebar/SessionList';
 import BasicInfoPanel from './panels/BasicInfoPanel';
 import BaseConfigPanel from './panels/BaseConfigPanel';
 import ToolConfigPanel from './panels/ToolConfigPanel';
+import SchedulePanel from './panels/SchedulePanel';
 import SkillConfigPanel from './panels/SkillConfigPanel';
 import s from './index.module.less';
 
@@ -363,6 +364,7 @@ export default function EditAgentPage() {
               {activePanel === 'info' && <BasicInfoPanel agentId={agentId} agent={agent} />}
               {activePanel === 'base' && <BaseConfigPanel agentId={agentId} />}
               {activePanel === 'tool' && <ToolConfigPanel agentId={agentId} />}
+              {activePanel === 'schedule' && agent && <SchedulePanel agentId={agentId} />}
               {activePanel === 'skill' && <SkillConfigPanel agentId={agentId} />}
               {activePanel === 'session' && (
                 <SessionSettingsPanel settings={sessionSettings} onChange={setSessionSettings} onPreview={setEffectPreview} />

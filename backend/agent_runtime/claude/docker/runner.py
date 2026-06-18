@@ -35,6 +35,22 @@ _WORKSPACE_CONSTRAINT = """\
 - 所有生成的文件必须写入 `output/` 目录，不允许在工作区根目录或其他位置创建非临时文件
 - 不允许删除或修改 `CLAUDE.md`、`.claude/` 目录下的任何内容
 - 仅在自己的工作区内操作，不要访问或修改工作区外的路径
+
+## 定时任务（系统级）⚠️ 重要！
+
+**必须使用 `register_schedule` 工具注册**，切勿使用 CronCreate 或其他方式——本容器是临时的，销毁后任务会丢失。
+
+register_schedule 会持久化到 Vera 平台，容器销毁后任务继续在主机上执行，结果回写到当前会话。
+
+参数：
+- prompt（必填）：任务触发时发给你的动作描述，保留用户原话
+- cron（必填）：5 段 cron 表达式「分 时 日 月 周」，0=周日。如 "0 8 * * *" = 每天8点
+- name（可选）：任务名称
+- timeout（可选）：超时秒数，默认 1200（20分钟）
+
+**⚠️ 时区**：所有 cron 表达式默认使用**中国时区（UTC+8/北京时间）**。如果用户没有明确指定时区，一律按北京时间处理。例如用户说"每天早上8点"，cron 就是 `0 8 * * *`。
+
+其他工具：list_schedules、delete_schedule、pause_schedule、resume_schedule、get_schedule_result
 """
 
 

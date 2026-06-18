@@ -79,3 +79,12 @@ async def _migrate(conn) -> None:
         await conn.execute(text("ALTER TABLE users ADD COLUMN totp_secret VARCHAR(64)"))
     if "totp_enabled" not in user_cols:
         await conn.execute(text("ALTER TABLE users ADD COLUMN totp_enabled BOOLEAN DEFAULT 0"))
+
+    # scheduled_tasks: add script + task_type columns (new schema since initial creation)
+    sched_cols = {r[1] for r in (await conn.execute(text("PRAGMA table_info(scheduled_tasks)"))).fetchall()}
+    if sched_cols and "script_content" not in sched_cols:
+        await conn.execute(text("ALTER TABLE scheduled_tasks ADD COLUMN script_content TEXT"))
+    if sched_cols and "script_name" not in sched_cols:
+        await conn.execute(text("ALTER TABLE scheduled_tasks ADD COLUMN script_name VARCHAR(200)"))
+    if sched_cols and "task_type" not in sched_cols:
+        await conn.execute(text("ALTER TABLE scheduled_tasks ADD COLUMN task_type VARCHAR(20) DEFAULT 'agent'"))

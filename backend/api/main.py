@@ -21,6 +21,7 @@ import os as _os
 from dotenv import load_dotenv
 load_dotenv(_os.path.join(_os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))), ".env"))
 
+import asyncio
 import logging
 import os
 from contextlib import asynccontextmanager
@@ -52,6 +53,7 @@ from api.routers import (
     model_configs,
     permissions,
     push,
+    schedules,
     session_settings,
     sessions,
     skills,
@@ -77,7 +79,20 @@ async def lifespan(_: FastAPI):
         import logging
         logging.getLogger("main").exception("Failed to restore WeChat monitors")
 
+    # Start scheduled task dispatcher
+    scheduler_task = None
+    try:
+        from api.scheduler.dispatcher import scheduler_loop
+        scheduler_task = asyncio.create_task(scheduler_loop())
+    except Exception:
+        import logging
+        logging.getLogger("main").exception("Failed to start scheduler")
+
     yield
+
+    # Shutdown: stop scheduler
+    if scheduler_task:
+        scheduler_task.cancel()
 
     # Shutdown: stop all WeChat monitors
     try:
@@ -122,6 +137,7 @@ for _router in (
     wecom.router,
     admin.router,
     session_settings.router,
+    schedules.router,
     config_files.router,
     history.router,
 ):

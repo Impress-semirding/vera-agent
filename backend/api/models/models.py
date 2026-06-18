@@ -223,6 +223,32 @@ class WeChatiLink(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
 
 
+class ScheduledTask(Base):
+    """Agent-level scheduled task — wakes up the agent at a cron time."""
+    __tablename__ = "scheduled_tasks"
+    id: Mapped[str] = mapped_column(String(64), primary_key=True)
+    agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id"), nullable=False, index=True)
+    user_id: Mapped[str] = mapped_column(String(200), default="system")
+    session_id: Mapped[str | None] = mapped_column(String(64))
+    name: Mapped[str] = mapped_column(String(200), nullable=False)
+    prompt: Mapped[str] = mapped_column(Text, nullable=False)
+    script_content: Mapped[str | None] = mapped_column(Text)  # optional Python script to run before agent
+    script_name: Mapped[str | None] = mapped_column(String(200))
+    cron: Mapped[str] = mapped_column(String(100), nullable=False)
+    timeout: Mapped[int] = mapped_column(Integer, default=1200)  # 20 min
+    source: Mapped[str] = mapped_column(String(20), default="system")  # system | chat
+    task_type: Mapped[str] = mapped_column(String(20), default="agent")  # agent | script+agent
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(20), default="active")  # active/paused/failed/running
+    fail_count: Mapped[int] = mapped_column(Integer, default=0)
+    next_run_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime)
+    last_status: Mapped[str | None] = mapped_column(String(20))
+    last_result: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+
 class ModelConfig(Base):
     """LLM model provider configuration — stores baseUrl + apiKey per provider."""
     __tablename__ = "model_configs"

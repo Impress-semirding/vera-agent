@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 
 from sqlalchemy import select
 
@@ -85,8 +86,13 @@ async def build_claude_config(
         servers = servers_result.scalars().all()
         # Inject the user's session token into every MCP server's env so
         # the MCP tool can call back to Vera with a vera-token header.
-        from api.api_response import get_user_token
-        user_token = get_user_token(user_id) or ""
+        from api.api_response import get_user_token, sign_session_token, _store_user_token
+        user_token = get_user_token(user_id)
+        if not user_token:
+            # Auto-generate a token for users without a login session
+            # (e.g., WeChat users who don't go through the web login flow)
+            user_token = sign_session_token(user_id)
+            _store_user_token(user_id, user_token)
 
         config.mcp_servers = []
         for srv in servers:
@@ -130,6 +136,25 @@ async def build_claude_config(
                     tool_set.add(t)
         if tool_set:
             config.allowed_tools = sorted(tool_set)
+
+    # ── Inject built-in scheduler MCP server (stdio, runs inside container) ──
+    # Requires Docker mode — /app/vera_scheduler_mcp.py only exists in the image.
+    if os.environ.get("AGENT_USE_DOCKER", "1") == "1":
+        host_addr = "host.docker.internal" if sys.platform == "darwin" else "127.0.0.1"
+        sched_env = {
+            "VERA_AGENT_ID": agent_id,
+            "VERA_SESSION_ID": session_id,
+            "VERA_BACKEND_URL": f"http://{host_addr}:{os.environ.get('REASONIX_API_PORT', '18080')}/api/v1",
+        }
+        if user_token:
+            sched_env["VERA_TOKEN"] = user_token
+        config.mcp_servers.append({
+            "name": "vera-scheduler",
+            "transport": "stdio",
+            "command": "python3",
+            "args": ["/app/vera_scheduler_mcp.py"],
+            "env": sched_env,
+        })
 
     # ── Sync workspace to disk ──
     _sync_workspace(config.cwd, config.claude_md, config.skills)
