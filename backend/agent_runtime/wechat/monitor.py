@@ -45,9 +45,10 @@ logger = logging.getLogger("wechat.monitor")
 # ═══════════════════════════════════════════════════════════════════════
 
 MAX_CONSECUTIVE_FAILURES = 5
+MAX_SESSION_EXPIRED = 5  # consecutive session-expired → stop monitor
 INITIAL_BACKOFF = 3.0  # seconds
 MAX_BACKOFF = 60.0
-SESSION_EXPIRED_BACKOFF = 5.0
+SESSION_EXPIRED_BACKOFF = 60.0  # 1 min — token expired, no need to hammer the API
 ADAPTER_IDLE_TIMEOUT = 600  # 10 min — close adapter after idle
 SEEN_MSG_TTL = 300  # 5 min — dedup window
 AGENT_PROCESSING_TIMEOUT = 120  # 2 min — max time for agent to respond
@@ -344,6 +345,7 @@ class Monitor:
 
         self._buf: str = ""
         self._failures: int = 0
+        self._session_expired_count: int = 0
         self._running: bool = False
         self._task: asyncio.Task | None = None
         self._idle_cleanup_task: asyncio.Task | None = None
@@ -421,8 +423,9 @@ class Monitor:
                 await asyncio.sleep(backoff)
                 continue
 
-            # Reset failure counter on any successful response
+            # Reset failure counters on any successful response
             self._failures = 0
+            self._session_expired_count = 0
 
             # Log message count
             if resp.msgs:
@@ -435,11 +438,20 @@ class Monitor:
                     self._buf = ""
                     self._save_buf()
                 else:
+                    self._session_expired_count += 1
                     logger.warning(
-                        f"[monitor:{self._agent_id}] token expired, needs re-login"
+                        f"[monitor:{self._agent_id}] token expired "
+                        f"({self._session_expired_count}/{MAX_SESSION_EXPIRED}), needs re-login"
                     )
                     if self._on_session_expired:
                         self._on_session_expired()
+                    if self._session_expired_count >= MAX_SESSION_EXPIRED:
+                        logger.error(
+                            f"[monitor:{self._agent_id}] session expired "
+                            f"{MAX_SESSION_EXPIRED} consecutive times, stopping monitor"
+                        )
+                        self._running = False
+                        break
                 await asyncio.sleep(SESSION_EXPIRED_BACKOFF)
                 continue
 
