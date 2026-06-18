@@ -130,6 +130,20 @@ async def _process_turn_claude(text: str) -> None:
     except Exception as exc:
         import traceback
         global _final_emitted
+
+        # Resume failed for ANY reason — retry without resume (fresh conversation)
+        if options.resume:
+            _emitter.emit_delta("reasoning", "⚠ 上一轮会话状态丢失，开启新会话…")
+            options.resume = None
+            _session_id = None
+            _final_emitted = False
+            try:
+                async for msg in query(prompt=text, options=options):
+                    await _handle_claude_message(msg)
+                return
+            except Exception as exc2:
+                exc = exc2
+
         _final_emitted = True
         _emitter.emit_error(f"SDK 错误: {exc}\n{traceback.format_exc()}")
 
@@ -306,6 +320,12 @@ async def _process_turn_custom(text: str) -> None:
 def main() -> None:
     global _config, _emitter
 
+    # One persistent event loop for the entire runner process.
+    # Using asyncio.run() per turn was destroying the event loop between turns,
+    # which broke the SDK's session resume (internal asyncio state lost).
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
     for line in sys.stdin:
         line = line.strip()
         if not line:
@@ -330,12 +350,14 @@ def main() -> None:
             if text and _config:
                 global _final_emitted
                 _final_emitted = False
-                asyncio.run(_process_turn(text))
+                loop.run_until_complete(_process_turn(text))
                 if not _final_emitted:
                     _emitter.emit_final()
 
         elif cmd_type == "quit":
             break
+
+    loop.close()
 
 
 if __name__ == "__main__":

@@ -126,6 +126,19 @@ async def _process_turn_claude(text: str) -> None:
     except Exception as exc:
         import traceback
         global _final_emitted
+
+        if options.resume:
+            _emitter.emit_delta("reasoning", "⚠ 上一轮会话状态丢失，开启新会话…")
+            options.resume = None
+            _session_id = None
+            _final_emitted = False
+            try:
+                async for msg in query(prompt=text, options=options):
+                    await _handle_claude_message(msg)
+                return
+            except Exception as exc2:
+                exc = exc2
+
         _final_emitted = True
         _emitter.emit_error(f"SDK 错误: {exc}\n{traceback.format_exc()}")
 

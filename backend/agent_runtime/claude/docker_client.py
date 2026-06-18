@@ -84,18 +84,27 @@ class DockerAgentClient:
         await self.ensure_image()
         self.cwd = config.cwd
 
-        # Ensure workspace dirs exist
+        # Ensure workspace dirs exist — chmod 777 so the container's non-root
+        # `agent` user can write (host creates these as root, container runs as agent)
         os.makedirs(config.cwd, exist_ok=True)
         os.makedirs(os.path.join(config.cwd, "output"), exist_ok=True)
         os.makedirs(os.path.join(config.cwd, ".claude-persist"), exist_ok=True)
+        # CLI stores conversation history here (NOT in ~/.claude/)
+        os.makedirs(os.path.join(config.cwd, ".claude-cache"), exist_ok=True)
+        os.chmod(config.cwd, 0o777)
+        os.chmod(os.path.join(config.cwd, "output"), 0o777)
+        os.chmod(os.path.join(config.cwd, ".claude-persist"), 0o777)
+        os.chmod(os.path.join(config.cwd, ".claude-cache"), 0o777)
 
         cmd = [
             "docker", "run", "-i", "--rm",
             "--name", f"vera-agent-{os.path.basename(config.cwd)}-{os.urandom(4).hex()}",
             # Mount workspace (read-write)
             "-v", f"{os.path.abspath(config.cwd)}:/workspace",
-            # Mount Claude session state (persist across container restarts)
+            # Mount Claude skills/permissions config
             "-v", f"{os.path.abspath(os.path.join(config.cwd, '.claude-persist'))}:/home/agent/.claude",
+            # Mount Claude CLI conversation history (where sessions are actually stored)
+            "-v", f"{os.path.abspath(os.path.join(config.cwd, '.claude-cache'))}:/home/agent/.cache/claude-cli-nodejs",
             # Pass env vars
             "-e", f"ANTHROPIC_API_KEY={config.api_key}",
             "-e", f"ANTHROPIC_BASE_URL={config.base_url}",

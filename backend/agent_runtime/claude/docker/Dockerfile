@@ -1,8 +1,7 @@
-FROM python:3.11-slim
+FROM alibaba-cloud-linux-3-registry.cn-hangzhou.cr.aliyuncs.com/alinux3/python:3.11.1
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    git curl ca-certificates \
- && rm -rf /var/lib/apt/lists/*
+RUN yum install -y git curl ca-certificates \
+ && yum clean all
 
 RUN pip install --no-cache-dir claude-agent-sdk
 
