@@ -20,6 +20,7 @@ from sqlalchemy import select
 
 from api.database import async_session
 from api.models import models as M
+from api.mcp_jwt import is_mcp_jwt_enabled, mint_mcp_jwt
 from agent_runtime.claude.client import ClaudeAgentConfig
 
 _GLOBAL_CONSTRAINTS = """
@@ -106,6 +107,14 @@ async def build_claude_config(
             env = _json_loads_dict(srv.env)
             if user_token:
                 env["VERA_TOKEN"] = user_token
+            headers = _json_loads_dict(srv.headers)
+            # 出站 http/sse MCP 调用注入 RS256 JWT（资源服务器持配对公钥验签）。
+            # stdio server 无 HTTP 头概念，仍走上面的 VERA_TOKEN env 回调鉴权。
+            transport = (srv.transport or "").lower()
+            if transport in ("http", "streamable-http", "sse") and is_mcp_jwt_enabled():
+                jwt_token = mint_mcp_jwt(sub=user_id, audience=srv.name)
+                if jwt_token:
+                    headers["Authorization"] = f"Bearer {jwt_token}"
             config.mcp_servers.append({
                 "name": srv.name,
                 "command": srv.command,
@@ -113,7 +122,7 @@ async def build_claude_config(
                 "env": env,
                 "transport": srv.transport,
                 "url": srv.url,
-                "headers": _json_loads_dict(srv.headers),
+                "headers": headers,
                 "tools": [
                     {"name": t.name, "description": t.description}
                     for t in tools

@@ -27,6 +27,8 @@ dependencies = [
     # WeChat iLink (QR code generation + media encryption)
     "qrcode>=7.4",
     "cryptography>=42",
+    # RS256 JWT signing for outbound MCP calls (resource servers verify with paired public key)
+    "pyjwt>=2.8",
 ]
 
 [tool.hatch.build.targets.wheel]

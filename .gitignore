@@ -27,6 +27,10 @@ data/
 # Env / secrets
 .env
 .env.local
+# RSA keys for MCP JWT signing (never commit)
+*.pem
+mcp_jwt_private.pem
+mcp_jwt_public.pem
 
 # OS / editor
 .DS_Store
