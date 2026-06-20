@@ -133,8 +133,8 @@ mkdir -p "$DATA_DIR"
 # 强制重新生成 JWT 密钥对，并自动写入 .env
 echo "  生成 JWT 密钥对 ..."
 rm -f mcp_jwt_private.pem mcp_jwt_public.pem
-openssl genrsa -out mcp_jwt_private.pem 2048 2>/dev/null
-openssl rsa -in mcp_jwt_private.pem -pubout -out mcp_jwt_public.pem 2>/dev/null
+openssl genrsa -out mcp_jwt_private.pem 2048
+openssl rsa -in mcp_jwt_private.pem -pubout -out mcp_jwt_public.pem
 PRIV_ONELINE="$(awk 'NF{printf "%s\\n",$0}' mcp_jwt_private.pem)"
 "$PYTHON_BIN" -c "
 import sys
