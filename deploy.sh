@@ -130,12 +130,11 @@ mkdir -p "$DATA_DIR"
 
 # .env 由用户手动准备，脚本仅注入 JWT 私钥
 
-# 强制重新生成 JWT 密钥对
+# 强制重新生成 JWT 密钥对，并自动写入 .env
 echo "  生成 JWT 密钥对 ..."
 rm -f mcp_jwt_private.pem mcp_jwt_public.pem
 openssl genrsa -out mcp_jwt_private.pem 2048 2>/dev/null
 openssl rsa -in mcp_jwt_private.pem -pubout -out mcp_jwt_public.pem 2>/dev/null
-# 将私钥以单行 \n 形式写入 .env（用 py 避免 sed 对 \n 的转义问题）
 PRIV_ONELINE="$(awk 'NF{printf "%s\\n",$0}' mcp_jwt_private.pem)"
 "$PYTHON_BIN" -c "
 import sys
@@ -148,7 +147,7 @@ with open('.env','w') as f:
         else:
             f.write(line)
 " "$PRIV_ONELINE"
-echo "  ✓ JWT 密钥对已生成"
+echo "  ✓ 密钥对已生成"
 echo "    私钥 → .env (VERA_MCP_JWT_PRIVATE_KEY)"
 echo "    公钥 → $BACKEND_DIR/mcp_jwt_public.pem（请拷到 MCP server）"
 echo ""
