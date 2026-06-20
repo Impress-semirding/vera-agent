@@ -125,6 +125,7 @@ export default function EditAgentPage() {
   const [rightView, setRightView] = useState<RightView>('chat');
 
   // Sessions (sidebar) + chat input.
+  const creatingSessionRef = useRef(false);
   const [sessions, setSessions] = useState<{ id: string; name: string }[]>([]);
   const [chatInput, setChatInput] = useState('');
   const [artifactOpen, setArtifactOpen] = useState(false);
@@ -184,7 +185,10 @@ export default function EditAgentPage() {
 
   const handleResetContext = useCallback(() => {
     if (!sessionId) return;
-    fetch(`/api/v1/sessions/${sessionId}/reset-context?user=${encodeURIComponent(getUserName() ?? '')}`, { method: 'POST' })
+    fetch(`/api/v1/sessions/${sessionId}/reset-context?user=${encodeURIComponent(getUserName() ?? '')}`, {
+      method: 'POST',
+      headers: { Authorization: `Bearer ${getToken()}` },
+    })
       .then(() => {
         stop();  // kill current Claude client so next msg starts fresh
         message.success('上下文已重置');
@@ -196,10 +200,14 @@ export default function EditAgentPage() {
     const text = overrideText ?? chatInput;
     if (!text.trim()) return;
     if (!sessionId) {
-      // No session yet: create it + switch the route, but keep the text in the
-      // input box (don't clear, don't send). The socket opens for the new
-      // session; the user presses send again to actually send.
-      void send(text);
+      if (creatingSessionRef.current) return;
+      creatingSessionRef.current = true;
+      // No session yet: create one + navigate, but DON'T send the message.
+      // The text stays in the input box; user presses Enter again to send.
+      sessionService.create(agentId!).then(res => {
+        creatingSessionRef.current = false;
+        if (res.data?.id) handleSessionCreated(res.data.id);
+      }).catch(() => { creatingSessionRef.current = false; message.error('创建会话失败'); });
       return;
     }
     setChatInput('');
@@ -761,13 +769,16 @@ function ArtifactSidebar({ tab, artifacts, onTabChange, onClose }: {
   // Fetch file list from API on open
   useEffect(() => {
     if (!sessionId || tab !== 'file') return;
-    fetch(`/api/v1/files/${sessionId}?user=${encodeURIComponent(getUserName() ?? '')}`)
+    fetch(`/api/v1/files/${sessionId}?user=${encodeURIComponent(getUserName() ?? '')}`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    })
       .then(r => r.json())
       .then(data => { if (Array.isArray(data)) setFiles(data); })
       .catch(() => {});
   }, [sessionId, tab, artifacts]);
 
-  const downloadUrl = (path: string) => `/api/v1/files/${sessionId}/download?path=${encodeURIComponent(path)}&user=${encodeURIComponent(getUserName() ?? '')}`;
+  const downloadUrl = (path: string) =>
+    `/api/v1/files/${sessionId}/download?path=${encodeURIComponent(path)}&user=${encodeURIComponent(getUserName() ?? '')}&token=${encodeURIComponent(getToken() ?? '')}`;
 
   // Resizable sidebar
   const [sideWidth, setSideWidth] = useState(420);

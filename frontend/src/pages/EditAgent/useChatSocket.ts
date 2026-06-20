@@ -431,7 +431,10 @@ export function useChatSocket(
       messagesMapRef.current.set(sessionId, []);
       artifactsMapRef.current.set(sessionId, []);
       rerender();
-      fetch(`/api/v1/sessions/${sessionId}/messages`, { method: 'DELETE' }).catch(() => {});
+      fetch(`/api/v1/sessions/${sessionId}/messages`, {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${getToken()}` },
+      }).catch(() => {});
     }
   }, [sessionId]);
 

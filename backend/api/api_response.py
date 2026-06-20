@@ -17,7 +17,7 @@ from datetime import datetime
 from typing import Any
 from urllib.parse import unquote
 
-from fastapi import FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Query, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
@@ -100,21 +100,25 @@ DEFAULT_USER = "current-user"
 def current_user(
     authorization: str | None = Header(default=None, alias="Authorization"),
     vera_token: str | None = Header(default=None, alias="vera-token"),
+    token: str | None = Query(default=None, alias="token"),
 ) -> str:
     """Resolve the acting user from a signed session token.
 
-    Accepts ``Authorization: Bearer <token>`` or ``vera-token: <token>``
-    (the latter is for MCP servers calling back to Vera).  No fallback.
+    Accepts ``Authorization: Bearer <token>``, ``vera-token: <token>``,
+    or ``?token=...`` query param (the latter is for ``<a href download>``
+    and other GET requests where custom headers cannot be set).
     """
-    token = None
+    raw = None
     if authorization and authorization.startswith("Bearer "):
-        token = authorization[7:]
+        raw = authorization[7:]
     elif vera_token:
-        token = vera_token
-    if token:
-        username = verify_session_token(token)
+        raw = vera_token
+    elif token:
+        raw = token
+    if raw:
+        username = verify_session_token(raw)
         if username:
-            _store_user_token(username, token)
+            _store_user_token(username, raw)
             return username
         raise HTTPException(status_code=401, detail="登录已过期，请重新登录")
     raise HTTPException(status_code=401, detail="请先登录")
