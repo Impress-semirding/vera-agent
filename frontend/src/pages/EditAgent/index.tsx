@@ -294,7 +294,7 @@ export default function EditAgentPage() {
           <Button type="text" size="small" icon={<ArrowLeftOutlined />} onClick={() => navigate('/')} />
           <span className={s.sidebarTitle}>{agent.name}</span>
           <Tag color={isSystem ? 'blue' : 'purple'} style={{ fontSize: 10, lineHeight: '16px', margin: 0, flexShrink: 0 }}>
-            {isSystem ? '系统虾' : '个人虾'}
+            {isSystem ? 'Claude code' : ''}
           </Tag>
         </div>
 
@@ -592,7 +592,7 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
           </div>
           <p style={{ fontSize: 14, color: '#00000073', marginBottom: 4 }}>{agentName}</p>
           <p style={{ fontSize: 12, color: '#00000040', marginBottom: 24 }}>
-            <span style={{ fontWeight: 500, color: '#000000a6' }}>{agentName}</span> · {agentType === 'system' ? '系统虾' : '个人虾'}
+            <span style={{ fontWeight: 500, color: '#000000a6' }}>{agentName}</span> · {agentType === 'system' ? 'Claude Code' : ''}
           </p>
           <div style={{ width: '100%', maxWidth: 640 }}>
             <ChatInputArea value={chatInput} onChange={onChatInputChange} onSend={onSend} onStop={onStop} streaming={streaming} large />

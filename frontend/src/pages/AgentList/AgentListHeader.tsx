@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Segmented, Input, Checkbox, Button, Radio, Avatar, Modal, message } from 'antd';
+import { Segmented, Input, Checkbox, Button, Avatar, Modal, message } from 'antd';
 import { StarOutlined, PlusOutlined, LogoutOutlined, UserOutlined, SettingOutlined, SafetyOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import { useAgentStore } from '@/stores/useAgentStore';
@@ -13,15 +13,9 @@ const MODE_OPTIONS: { label: string; value: AppMode }[] = [
   { label: '普通模式', value: 'normal' },
 ];
 
-const TYPE_FILTERS = [
-  { label: '全部', value: 'all' as const },
-  { label: '系统虾', value: 'system' as const },
-  { label: '个人虾', value: 'personal' as const },
-];
-
 export default function AgentListHeader() {
   const navigate = useNavigate();
-  const { mode, typeFilter, search, mineOnly, starredOnly, setMode, setTypeFilter, setSearch, toggleMine, toggleStarred } = useAgentStore();
+  const { mode, search, mineOnly, starredOnly, setMode, setSearch, toggleMine, toggleStarred } = useAgentStore();
   const user = useAuthStore((s) => s.user);
   const logout = useAuthStore((s) => s.logout);
   const [modelConfigOpen, setModelConfigOpen] = useState(false);
@@ -95,22 +89,6 @@ export default function AgentListHeader() {
 
         {/* Mode Switcher */}
         <Segmented options={MODE_OPTIONS} value={mode} onChange={(v) => setMode(v as AppMode)} />
-
-        {/* Divider */}
-        <div style={{ width: 1, height: 24, background: '#d9d9d9' }} />
-
-        {/* Type Filter */}
-        <Radio.Group
-          value={typeFilter}
-          onChange={(e) => setTypeFilter(e.target.value)}
-          optionType="button"
-          buttonStyle="solid"
-          size="small"
-        >
-          {TYPE_FILTERS.map((f) => (
-            <Radio.Button key={f.value} value={f.value}>{f.label}</Radio.Button>
-          ))}
-        </Radio.Group>
 
         {/* Quick Filters */}
         <Checkbox checked={mineOnly} onChange={toggleMine}>我创建的</Checkbox>

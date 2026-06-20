@@ -26,7 +26,7 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
   total: 0,
   loading: false,
   mode: 'claude',
-  typeFilter: 'all',
+  typeFilter: 'system',
   search: '',
   mineOnly: false,
   starredOnly: false,

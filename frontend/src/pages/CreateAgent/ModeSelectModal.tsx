@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import { Modal, Card, Radio } from 'antd';
-import { RobotOutlined, UserOutlined, ThunderboltOutlined, ToolOutlined } from '@ant-design/icons';
+import { RobotOutlined, ThunderboltOutlined, ToolOutlined } from '@ant-design/icons';
 import type { AgentType, AppMode } from '@/types/agent';
 
 interface Props {
@@ -8,23 +8,6 @@ interface Props {
   onSelect: (type: AgentType, mode: AppMode) => void;
   onCancel: () => void;
 }
-
-const AGENT_TYPES: { type: AgentType; icon: React.ReactNode; title: string; desc: string; features: string[] }[] = [
-  {
-    type: 'system',
-    icon: <RobotOutlined style={{ fontSize: 32, color: '#1677ff' }} />,
-    title: '系统虾',
-    desc: '面向团队的共享智能体，支持权限管理和推送配置',
-    features: ['全员可见，团队共享', '支持 MCP 工具和技能扩展', '企微推送和权限管理'],
-  },
-  {
-    type: 'personal',
-    icon: <UserOutlined style={{ fontSize: 32, color: '#52c41a' }} />,
-    title: '个人虾',
-    desc: '面向个人的私有智能体，完全自主配置',
-    features: ['个人私有，仅自己可见', '支持 .claude/ 目录配置', '灵活的文件和会话管理'],
-  },
-];
 
 export default function ModeSelectModal({ open, onSelect, onCancel }: Props) {
   const [appMode, setAppMode] = useState<AppMode>('claude');
@@ -35,7 +18,7 @@ export default function ModeSelectModal({ open, onSelect, onCancel }: Props) {
       open={open}
       onCancel={onCancel}
       footer={null}
-      width={640}
+      width={480}
       centered
     >
       {/* Mode toggle */}
@@ -59,36 +42,37 @@ export default function ModeSelectModal({ open, onSelect, onCancel }: Props) {
         </Radio.Group>
       </div>
 
-      {/* Claude mode: show system / personal cards */}
+      {/* Claude mode: system agent */}
       {appMode === 'claude' && (
-        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 16, padding: '8px 0 16px' }}>
-          {AGENT_TYPES.map((m) => (
-            <Card
-              key={m.type}
-              hoverable
-              style={{ cursor: 'pointer', textAlign: 'center' }}
-              onClick={() => onSelect(m.type, 'claude')}
-            >
-              <div style={{ marginBottom: 12 }}>{m.icon}</div>
-              <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>{m.title}</div>
-              <div style={{ fontSize: 13, color: '#00000073', marginBottom: 12 }}>{m.desc}</div>
-              <ul style={{ textAlign: 'left', fontSize: 12, color: '#00000073', listStyle: 'disc', paddingLeft: 16 }}>
-                {m.features.map((f, i) => (
-                  <li key={i}>{f}</li>
-                ))}
-              </ul>
-            </Card>
-          ))}
-        </div>
-      )}
-
-      {/* Normal mode: self-built agent description */}
-      {appMode === 'normal' && (
-        <div style={{ padding: '16px 0' }}>
+        <div style={{ padding: '8px 0 16px' }}>
           <Card
             hoverable
             style={{ cursor: 'pointer', textAlign: 'center' }}
-            onClick={() => onSelect('personal', 'normal')}
+            onClick={() => onSelect('system', 'claude')}
+          >
+            <div style={{ marginBottom: 12 }}>
+              <RobotOutlined style={{ fontSize: 32, color: '#1677ff' }} />
+            </div>
+            <div style={{ fontSize: 16, fontWeight: 600, marginBottom: 8 }}>Claude Code</div>
+            <div style={{ fontSize: 13, color: '#00000073', marginBottom: 12 }}>
+              面向团队的共享智能体，支持权限管理和推送配置
+            </div>
+            <ul style={{ textAlign: 'left', fontSize: 12, color: '#00000073', listStyle: 'disc', paddingLeft: 16, margin: 0 }}>
+              <li>全员可见，团队共享</li>
+              <li>支持 MCP 工具和技能扩展</li>
+              <li>企微推送和权限管理</li>
+            </ul>
+          </Card>
+        </div>
+      )}
+
+      {/* Normal mode: self-built agent */}
+      {appMode === 'normal' && (
+        <div style={{ padding: '8px 0 16px' }}>
+          <Card
+            hoverable
+            style={{ cursor: 'pointer', textAlign: 'center' }}
+            onClick={() => onSelect('system', 'normal')}
           >
             <div style={{ marginBottom: 12 }}>
               <ToolOutlined style={{ fontSize: 32, color: '#faad14' }} />
@@ -100,7 +84,6 @@ export default function ModeSelectModal({ open, onSelect, onCancel }: Props) {
             <ul style={{ textAlign: 'left', fontSize: 12, color: '#00000073', listStyle: 'disc', paddingLeft: 16, margin: 0 }}>
               <li>支持对接任意 OpenAI 兼容 API</li>
               <li>自定义系统提示词和参数</li>
-              <li>个人私有，按需配置</li>
             </ul>
           </Card>
         </div>

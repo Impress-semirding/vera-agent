@@ -5,7 +5,7 @@ import type { Agent } from '@/types/agent';
 import { useAgentStore } from '@/stores/useAgentStore';
 import styles from './index.module.less';
 
-const TYPE_LABELS = { system: '系统虾', personal: '个人虾' };
+const TYPE_LABELS = { system: 'Cluade code' };
 const TYPE_COLORS = { system: 'blue', personal: 'green' };
 const MODE_LABELS = { claude: 'Claude Code', normal: '普通模式' };
 const MODE_COLORS = { claude: 'geekblue', normal: 'default' };

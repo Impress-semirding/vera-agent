@@ -35,7 +35,7 @@ export default function BasicInfoForm({ agentType, mode, submitting, onSubmit, o
       ...values,
       type: agentType,
       mode,
-      visibility: agentType === 'system' ? values.visibility ?? true : false,
+      visibility: values.visibility ?? true,
     });
   };
 

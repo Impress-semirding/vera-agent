@@ -31,7 +31,7 @@ export default function SystemSidebar({
       <div className={s.sidebarHeader}>
         <Button type="text" size="small" icon={<ArrowLeftOutlined />} onClick={() => navigate('/')} />
         <span className={s.sidebarTitle}>{agentName || '系统智能体'}</span>
-        <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', margin: 0, flexShrink: 0 }}>系统虾</Tag>
+        <Tag color="blue" style={{ fontSize: 10, lineHeight: '16px', margin: 0, flexShrink: 0 }}>Claude Code</Tag>
       </div>
 
       {/* Tabs */}
