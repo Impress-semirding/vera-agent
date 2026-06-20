@@ -1,5 +1,8 @@
 # Vera 阿里云 Linux 部署指南
 
+> 🚀 **一键部署**：`chmod +x deploy.sh && sudo ./deploy.sh`
+> 脚本自动完成下面一到五节全部操作。完成后按第六节手动启动服务。
+
 > 整体拓扑：**前端(vite:3000)** + **后端(uvicorn:18080)** 跑在宿主机；后端按需拉起 **Docker 容器**执行 agent。
 > agent 与 MCP server 之间是**双向调用**：
 > - **出站**：agent 调用 MCP server。`http/sse` 走 **JWT 签名鉴权**（本指南重点），`stdio` 走 env 注入。
@@ -49,7 +52,7 @@ pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple/
 pip install -e . -i https://pypi.tuna.tsinghua.edu.cn/simple/
 
 # 前端
-cd ../frontend && npm install
+cd ../frontend && pnpm install
 ```
 
 ---
