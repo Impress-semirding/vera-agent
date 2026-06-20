@@ -720,7 +720,10 @@ function ChatInputArea({ value, onChange, onSend, onStop, streaming, large, sess
             placeholder="发送消息…（支持粘贴图片）"
             autoSize={{ minRows: large ? 5 : 3, maxRows: 9 }}
             style={{ border: 'none', boxShadow: 'none', resize: 'none', padding: '12px 16px 4px', borderRadius: 12 }}
-            onPressEnter={(e) => { if (!e.shiftKey && canSend) { e.preventDefault(); handleSend(); } }}
+            onPressEnter={(e) => {
+              if ((e.nativeEvent as any).isComposing) return;
+              if (!e.shiftKey && canSend) { e.preventDefault(); handleSend(); }
+            }}
             onPaste={handlePaste}
           />
           <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 16px 10px' }}>

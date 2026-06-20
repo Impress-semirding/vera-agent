@@ -47,7 +47,6 @@ cd /home/vera-agent-main/backend
 source .venv/bin/activate
 pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple/
 pip install -e . -i https://pypi.tuna.tsinghua.edu.cn/simple/
-pip install claude-agent-sdk qrcode Pillow -i https://pypi.tuna.tsinghua.edu.cn/simple/
 
 # 前端
 cd ../frontend && npm install
@@ -76,6 +75,10 @@ VERA_MCP_JWT_PRIVATE_KEY=
 VERA_MCP_JWT_ISSUER=vera-agent
 # JWT 有效期（秒）：需 ≥ 单次会话最长时长，否则会话中途 token 失效
 VERA_MCP_JWT_TTL=3600
+
+# LLM Provider（可选，normal 引擎用）
+# DEEPSEEK_API_KEY=sk-your-key
+# DEEPSEEK_BASE_URL=https://api.deepseek.com
 
 # DingTalk OAuth（可选）
 DINGTALK_APP_KEY=
@@ -140,6 +143,7 @@ VERA_MCP_JWT_PRIVATE_KEY=-----BEGIN PRIVATE KEY-----\nMIIE...\n-----END PRIVATE 
 > **不需要**手工创建 Dockerfile，直接构建即可。
 
 ```bash
+cd /home/vera-agent-main/backend
 docker build -t vera-agent-runner:latest ./agent_runtime/claude/docker/
 ```
 
@@ -169,30 +173,16 @@ curl -s http://127.0.0.1:3000/ | head -3
 curl -s http://127.0.0.1:18080/health
 ```
 
-### （可选）改用 systemd 托管
-
-仓库已自带 `deploy/vera-backend.service`、`deploy/vera-frontend.service`，比 nohup 更适合生产
-（开机自启、崩溃自动拉起，且 `EnvironmentFile=` 直接读 `.env`）：
-
-```bash
-cp /home/vera-agent-main/deploy/vera-*.service /etc/systemd/system/
-systemctl daemon-reload
-systemctl enable --now vera-backend vera-frontend
-systemctl status vera-backend
-```
-
 ### 停止
 ```bash
 fuser -k 3000/tcp
 pkill -f "uvicorn api.main"
-# systemd 方式：systemctl stop vera-backend vera-frontend
 ```
 
 ### 重启
 ```bash
 fuser -k 3000/tcp; pkill -f "uvicorn api.main"
 # 再跑上面的启动命令
-# systemd 方式：systemctl restart vera-backend vera-frontend
 ```
 
 ### 日志
@@ -291,7 +281,16 @@ Node/TypeScript MCP server 用 `jsonwebtoken`：`jwt.verify(token, PUB, { algori
 |------|-----|------|
 | 名称 | `mysql-mcp` | **必须**与 server 侧验签时的 `audience` 一致（JWT `aud` 即取此值） |
 | Transport | `streamable-http`（或 `http` / `sse`） | 选 HTTP 类才会注入 JWT |
-| URL | `http://127.0.0.1:3003` | Linux 容器是 `--network host`，`127.0.0.1` = 宿主机 |
+| URL | 见下方说明 | **macOS 与 Linux 填法不同**，关键取决于容器怎么访问宿主机 |
+
+> 📌 **如果先在 macOS 本地测试再部署到 Linux，注意 URL 要改**（`docker_client.py` 按平台自动选网络模式）：
+>
+> | 平台 | Docker 网络 | 容器访问宿主机的方式 | MCP URL 填 |
+> |------|------------|---------------------|-----------|
+> | **macOS** | `bridge`（Docker Desktop 无法 host 网络） | 走 Docker VM 内置 DNS `host.docker.internal` → 宿主机 | `http://host.docker.internal:3003/mcp` |
+> | **Linux** | `host`（容器共享宿主机网络栈） | `127.0.0.1` **直接就是宿主机** | `http://127.0.0.1:3003/mcp` |
+>
+> `0.0.0.0` 是监听地址不是连接地址，**不要**填到 URL 里。
 
 > **name ↔ audience 是硬耦合**：Vera 用 `name` 当 JWT 的 `aud`，server 侧必须用相同值校验，否则验签因 `aud` 不符而拒绝。
 
@@ -402,6 +401,15 @@ docker build -t vera-agent-runner:latest /home/vera-agent-main/backend/agent_run
 
 ### JWT 会话中途失效（401 突然出现）
 `VERA_MCP_JWT_TTL` 过短（默认 3600s）。把它调到 ≥ 单次会话最长时长后重启后端。
+
+### agent 发现不了 MCP tools（tools 列表始终为空）
+
+按顺序排查：
+
+1. **URL 填错了**：`0.0.0.0` 是监听地址不能当连接地址，必须用 `127.0.0.1`；macOS 本地用 `host.docker.internal`（见 8.1(3) 表格）。
+2. **MCP server 没启动**：`curl -s http://127.0.0.1:3003/ | head -3` 确认端口活着。
+3. **JWT 私钥没配**：`grep VERA_MCP_JWT_PRIVATE_KEY .env` 值非空。
+4. **改完 .env 没重启后端**：`pkill -f "uvicorn api.main"` 后重新启动。
 
 ### MCP server 侧 `RS256` 验签报错
 - 确认 `mcp_jwt_public.pem` 是用 `openssl rsa -in 私钥 -pubout` 导出的、与 `.env` 里私钥配对的那把。

@@ -51,55 +51,65 @@ vera-agent/
 ```bash
 cd backend
 
-# 虚拟环境
-python3 -m venv .venv
+# 1. 创建虚拟环境
+python3.11 -m venv .venv
 source .venv/bin/activate
 
-# 基础安装
-pip install -e .
+# 2. 安装依赖（pyproject.toml 已声明全部依赖，一次装齐）
+pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple/
+pip install -e . -i https://pypi.tuna.tsinghua.edu.cn/simple/
 
-# Claude 模式需要额外安装 SDK
-pip install claude-agent-sdk
+# 选配：国内镜像加速
+# pip config set global.index-url https://pypi.tuna.tsinghua.edu.cn/simple/
 ```
 
-#### Docker 安装
+> `cryptography` 最新版需要 Rust 编译链，`pyproject.toml` 已锁定 `>=42,<45` 避开。
+> 如果本地 Rust 工具链正常（`rustc -V`），可以解除上限安装最新版。
+
+#### 启动方式
+
+统一通过 `python -m uvicorn` 启动（`source activate` 后 `python` 即 venv 的）：
 
 ```bash
-# macOS
-brew install --cask docker
+cd backend
+source .venv/bin/activate
 
-# Linux
-curl -fsSL https://get.docker.com | sh
+# 本地子进程模式（无需 Docker）
+AGENT_USE_DOCKER=0 python -m uvicorn api.main:app --host 127.0.0.1 --port 18080 --reload
+
+# Docker 隔离模式（推荐）
+AGENT_USE_DOCKER=1 python -m uvicorn api.main:app --host 127.0.0.1 --port 18080 --reload
 ```
 
-#### 本地子进程模式（无需 Docker）
+> ⚠️ 确保在 `source .venv/bin/activate` 之后执行，不要用系统的 `uvicorn` 命令。
+
+#### 配置（`.env`）
+
+复制模板并修改：
 
 ```bash
-AGENT_USE_DOCKER=0 uvicorn api.main:app --host 127.0.0.1 --port 18080 --reload
+cp .demo.env .env
 ```
 
-#### Docker 隔离模式（推荐生产环境）
-
-首次启动自动构建镜像，之后复用。
-
-```bash
-AGENT_USE_DOCKER=1 uvicorn api.main:app --host 127.0.0.1 --port 18080 --reload
-```
-
-配置项：
+核心配置项：
 
 | 环境变量 | 默认值 | 说明 |
 |---------|--------|------|
+| `VERA_SESSION_SECRET` | 空 | Session token 签名密钥，**生产必改**为随机 64 位字符串 |
 | `AGENT_USE_DOCKER` | `1` | `1`=Docker 容器隔离，`0`=本地子进程 |
-| `AGENT_MAX_CONTAINERS` | `5` | 最大并发容器数 |
-| `AGENT_IDLE_TIMEOUT` | `1800` | 容器空闲超时秒数（默认 30 分钟） |
-| `AGENT_WORKSPACE_BASE` | 项目 `data/workspaces/` | Agent 工作区根目录 |
+| `AGENT_DOCKER_IMAGE` | `vera-agent-runner:latest` | Agent 容器镜像名 |
+| `AGENT_MAX_CONCURRENT_TURNS` | `2` | 每用户最大并发 turn 数 |
+| `VERA_MCP_JWT_PRIVATE_KEY` | 空 | http/sse MCP 的 RS256 JWT 签发私钥（PEM 单行 `\n` 格式），不配则 JWT 注入静默关闭 |
+| `VERA_MCP_JWT_ISSUER` | `vera-agent` | JWT 签发方标识 |
+| `VERA_MCP_JWT_TTL` | `3600` | JWT 有效期（秒） |
+| `DEEPSEEK_API_KEY` | 空 | DeepSeek API key（normal 引擎用） |
+
+详细部署流程见 [DEPLOY_ALIYUN.md](DEPLOY_ALIYUN.md)。
 
 - API: `http://127.0.0.1:18080/api/v1` · Docs: `http://127.0.0.1:18080/docs`
 - 首次运行自动创建 SQLite 数据库并初始化种子数据
 - 默认登录账号: `admin`，密码: `123456`
-- 如需新增用户，编辑 `backend/api/models/seed.py` 中的 `_SEED_USERS` 和 `_SEED_USER_PASSWORDS` 后重启即可
-- 登录接口: `POST /api/v1/auth/login`，body `{"identifier": "admin", "password": "123456"}`，返回用户信息，后续请求通过 `X-User` header 携带身份
+- 登录接口: `POST /api/v1/auth/login`，body `{"identifier": "admin", "password": "123456"}`，返回 `data.token`，后续请求通过 `Authorization: Bearer <token>` 携带身份
 
 ### 前端
 
