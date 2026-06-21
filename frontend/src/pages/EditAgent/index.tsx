@@ -5,6 +5,7 @@ import {
   Modal, Popconfirm, Empty, message,
 } from 'antd';
 import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import ReactECharts from 'echarts-for-react';
 import mermaid from 'mermaid';
 
@@ -549,11 +550,11 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
                                 {msg.reasoning}
                               </div>
                             ) : null}
-                            <div style={{
+                            <div className={s.markdownBody} style={{
                               padding: '6px 16px', borderRadius: 12, fontSize: 14, lineHeight: 1.6,
                               background: '#f5f5f5', color: '#000000e0',
                             }}>
-                              <ReactMarkdown components={{ code: CodeBlock, p: 'div' }}>{msg.content}</ReactMarkdown>
+                              <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: CodeBlock, p: 'div' }}>{msg.content}</ReactMarkdown>
                               {msg.pending ? <TypingDots /> : null}
                             </div>
                           </>
@@ -1379,11 +1380,11 @@ function ToolCard({ segment }: { segment: Extract<Segment, { kind: 'tool' }> }) 
 /** Main content text — Markdown with ECharts support */
 function TextSegment({ text }: { text: string; pending?: boolean }) {
   return (
-    <div style={{
+    <div className={s.markdownBody} style={{
       padding: '6px 16px', borderRadius: 12, fontSize: 14, lineHeight: 1.6,
       background: '#f5f5f5', color: '#000000e0',
     }}>
-      <ReactMarkdown components={{ code: CodeBlock, p: 'div' }}>{text}</ReactMarkdown>
+      <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: CodeBlock, p: 'div' }}>{text}</ReactMarkdown>
     </div>
   );
 }
