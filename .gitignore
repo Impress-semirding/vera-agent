@@ -37,3 +37,4 @@ mcp_jwt_public.pem
 .idea/
 .vscode/
 *.log
+dist.zip

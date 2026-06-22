@@ -118,8 +118,7 @@ if ! command -v pnpm &>/dev/null; then
     npm install -g pnpm --silent
 fi
 pnpm install --silent
-pnpm run build
-echo "  ✓ 前端依赖安装 + 构建完成"
+echo "  ✓ 前端依赖安装完成（构建请在本地执行后上传 dist/）"
 echo ""
 
 # ── 5. 配置 .env + JWT 密钥对 ────────────────────────────────────────────
