@@ -32,6 +32,7 @@ import BaseConfigPanel from './panels/BaseConfigPanel';
 import ToolConfigPanel from './panels/ToolConfigPanel';
 import SchedulePanel from './panels/SchedulePanel';
 import SkillConfigPanel from './panels/SkillConfigPanel';
+import PermissionPanel from './panels/PermissionPanel';
 import s from './index.module.less';
 
 // ─── Time formatting ────────────────────────────────
@@ -89,6 +90,7 @@ const PANEL_TITLES: Record<string, string> = {
   skill: '技能配置（Skill）',
   session: '会话设置',
   wecom: '企微连接',
+  permission: '用户权限',
 };
 
 // ─── Main Component ──────────────────────────────
@@ -228,6 +230,8 @@ export default function EditAgentPage() {
   }
 
   const isSystem = agent.type === 'system';
+  /** 当前用户是否有编辑权限（owner 或 Permission 含 "edit"） */
+  const canEdit = agent.permissions?.includes('edit') ?? false;
 
   // ─── Handlers (agentId is guaranteed from here on) ───
   const handlePanelChange = (panel: string) => {
@@ -299,9 +303,11 @@ export default function EditAgentPage() {
           <div className={`${s.sidebarTab} ${sidebarTab === 'session' ? s.active : ''}`} onClick={() => { setSidebarTab('session'); setRightView('chat'); }}>
             <MessageOutlined /> 会话
           </div>
-          <div className={`${s.sidebarTab} ${sidebarTab === 'config' ? s.active : ''}`} onClick={() => setSidebarTab('config')}>
-            {isSystem ? <><SettingOutlined /> 配置</> : <><FileTextOutlined /> 配置</>}
-          </div>
+          {canEdit && (
+            <div className={`${s.sidebarTab} ${sidebarTab === 'config' ? s.active : ''}`} onClick={() => setSidebarTab('config')}>
+              {isSystem ? <><SettingOutlined /> 配置</> : <><FileTextOutlined /> 配置</>}
+            </div>
+          )}
         </div>
 
         {/* Session view */}
@@ -372,6 +378,7 @@ export default function EditAgentPage() {
                 <SessionSettingsPanel settings={sessionSettings} onChange={setSessionSettings} onPreview={setEffectPreview} />
               )}
               {activePanel === 'wecom' && agent && <WeComPanel agent={agent} agentId={agentId!} />}
+              {activePanel === 'permission' && <PermissionPanel agentId={agentId!} />}
             </div>
           </>
         )}

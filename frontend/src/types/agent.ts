@@ -2,6 +2,8 @@
 export type AgentType = 'system' | 'personal';
 export type AppMode = 'claude' | 'normal';
 
+export type PermissionLevel = 'view' | 'edit' | 'delete';
+
 export interface Agent {
   id: string;
   name: string;
@@ -18,6 +20,25 @@ export interface Agent {
   updatedBy: string;
   updatedAt: string;
   createdAt: string;
+  /** 当前用户对该 agent 的权限列表（owner 返回全部） */
+  permissions?: PermissionLevel[];
+}
+
+export interface AgentPermission {
+  id: string;
+  agentId: string;
+  userName: string;
+  userEmail: string;
+  avatarUrl?: string;
+  agentPermissions: PermissionLevel[];
+  authPermissions: string[];
+}
+
+export interface PermissionFormData {
+  userName: string;
+  userEmail: string;
+  avatarUrl?: string;
+  agentPermissions: PermissionLevel[];
 }
 
 export interface AgentListParams {

@@ -78,3 +78,18 @@
   padding-top: 12px;
   border-top: 1px solid @border-light;
 }
+
+.deleteBtn {
+  margin-left: auto;
+  font-size: 14px;
+  color: @text-secondary;
+  opacity: 0;
+  transition: opacity 0.2s, color 0.2s;
+  cursor: pointer;
+  .card:hover & {
+    opacity: 1;
+  }
+  &:hover {
+    color: #ff4d4f !important;
+  }
+}

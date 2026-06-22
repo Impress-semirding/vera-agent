@@ -15,6 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.access import can_edit_agent
 from api.api_response import current_user, ok
 from api.database import get_db
 from api.models import models as M
@@ -61,6 +62,11 @@ async def update_settings(
     user: str = Depends(current_user),
 ):
     s = await _get_or_create(db, agent_id)
+    agent = (await db.execute(select(M.Agent).where(M.Agent.id == agent_id))).scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"agent {agent_id} not found")
+    if not await can_edit_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权编辑该智能体")
     if data.allowUpload is not None:
         s.allow_upload = data.allowUpload
     if data.allowEffortCustomization is not None:

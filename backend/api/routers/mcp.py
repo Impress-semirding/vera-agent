@@ -14,6 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.access import can_edit_agent
 from api.api_response import current_user, ok
 from api.database import get_db
 from api.models import models as M
@@ -98,6 +99,8 @@ async def create_server(
     agent = (await db.execute(select(M.Agent).where(M.Agent.id == agent_id))).scalar_one_or_none()
     if agent is None:
         raise HTTPException(status_code=404, detail=f"agent {agent_id} not found")
+    if not await can_edit_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权编辑该智能体")
 
     server = M.McpServer(
         id=new_id(),
@@ -125,6 +128,11 @@ async def update_server(
     user: str = Depends(current_user),
 ):
     server, tools = await _server_with_tools(db, server_id)
+    agent = (await db.execute(select(M.Agent).where(M.Agent.id == server.agent_id))).scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"agent {server.agent_id} not found")
+    if not await can_edit_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权编辑该智能体")
     if data.name is not None:
         server.name = data.name
     if data.command is not None:
@@ -148,6 +156,11 @@ async def update_server(
 @router.delete("/mcp-servers/{server_id}")
 async def delete_server(server_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     server = await _get_server(db, server_id)
+    agent = (await db.execute(select(M.Agent).where(M.Agent.id == server.agent_id))).scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"agent {server.agent_id} not found")
+    if not await can_edit_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权编辑该智能体")
     await db.execute(delete(M.McpTool).where(M.McpTool.mcp_server_id == server_id))
     await db.delete(server)
     await db.commit()
@@ -162,6 +175,11 @@ async def toggle_server_disabled(
     user: str = Depends(current_user),
 ):
     server = await _get_server(db, server_id)
+    agent = (await db.execute(select(M.Agent).where(M.Agent.id == server.agent_id))).scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"agent {server.agent_id} not found")
+    if not await can_edit_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权编辑该智能体")
     server.disabled = data.disabled
     await db.commit()
     return ok({"id": server.id, "disabled": server.disabled})
@@ -177,6 +195,14 @@ async def toggle_tool_enabled(
     tool = (await db.execute(select(M.McpTool).where(M.McpTool.id == tool_id))).scalar_one_or_none()
     if tool is None:
         raise HTTPException(status_code=404, detail=f"mcp tool {tool_id} not found")
+    server = (await db.execute(select(M.McpServer).where(M.McpServer.id == tool.mcp_server_id))).scalar_one_or_none()
+    if server is None:
+        raise HTTPException(status_code=404, detail=f"mcp server {tool.mcp_server_id} not found")
+    agent = (await db.execute(select(M.Agent).where(M.Agent.id == server.agent_id))).scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"agent {server.agent_id} not found")
+    if not await can_edit_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权编辑该智能体")
     tool.enabled = data.enabled
     await db.commit()
     return ok({"id": tool.id, "enabled": tool.enabled})

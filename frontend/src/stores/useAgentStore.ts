@@ -19,6 +19,7 @@ interface AgentStore {
   fetchAgents: () => Promise<void>;
   toggleStar: (id: string) => Promise<void>;
   createAgent: (data: any) => Promise<Agent>;
+  deleteAgent: (id: string) => Promise<void>;
 }
 
 export const useAgentStore = create<AgentStore>((set, get) => ({
@@ -68,5 +69,13 @@ export const useAgentStore = create<AgentStore>((set, get) => ({
     const res = await agentService.create(data);
     await get().fetchAgents();
     return res.data;
+  },
+
+  deleteAgent: async (id) => {
+    await agentService.delete(id);
+    set((s) => ({
+      agents: s.agents.filter((a) => a.id !== id),
+      total: s.total - 1,
+    }));
   },
 }));

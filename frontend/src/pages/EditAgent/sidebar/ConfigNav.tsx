@@ -28,6 +28,12 @@ const NAV_GROUPS = [
       { key: 'wecom', icon: 'fa-wechat', label: '微信连接' },
     ],
   },
+  {
+    label: '权限管理',
+    items: [
+      { key: 'permission', icon: 'fa-shield', label: '用户权限' },
+    ],
+  },
 ];
 
 export default function ConfigNav({ activePanel, onPanelChange }: ConfigNavProps) {

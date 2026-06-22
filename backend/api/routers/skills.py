@@ -21,6 +21,7 @@ from fastapi import APIRouter, Depends, File, Form, HTTPException, Response, Upl
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.access import can_edit_agent
 from api.api_response import current_user, iso, ok
 from api.database import get_db
 from api.models import models as M
@@ -124,6 +125,8 @@ async def upload_skill(
     agent = (await db.execute(select(M.Agent).where(M.Agent.id == agent_id))).scalar_one_or_none()
     if agent is None:
         raise HTTPException(status_code=404, detail=f"agent {agent_id} not found")
+    if not await can_edit_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权编辑该智能体")
 
     data = await _read_upload(file)
     try:
@@ -197,6 +200,11 @@ async def update_skill(
     user: str = Depends(current_user),
 ):
     skill = await _get_skill(db, skill_id)
+    agent = (await db.execute(select(M.Agent).where(M.Agent.id == skill.agent_id))).scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"agent {skill.agent_id} not found")
+    if not await can_edit_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权编辑该智能体")
     if data.description is not None:
         skill.description = data.description
     if data.model is not None:
@@ -214,6 +222,11 @@ async def update_skill(
 @router.delete("/skills/{skill_id}")
 async def delete_skill(skill_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     skill = await _get_skill(db, skill_id)
+    agent = (await db.execute(select(M.Agent).where(M.Agent.id == skill.agent_id))).scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"agent {skill.agent_id} not found")
+    if not await can_edit_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权编辑该智能体")
     # Remove zip file from disk if it exists.
     if skill.file_path and os.path.isfile(skill.file_path):
         os.remove(skill.file_path)
@@ -230,6 +243,11 @@ async def toggle_skill_enabled(
     user: str = Depends(current_user),
 ):
     skill = await _get_skill(db, skill_id)
+    agent = (await db.execute(select(M.Agent).where(M.Agent.id == skill.agent_id))).scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"agent {skill.agent_id} not found")
+    if not await can_edit_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权编辑该智能体")
     skill.enabled = data.enabled
     await db.commit()
     return ok({"id": skill.id, "enabled": skill.enabled})

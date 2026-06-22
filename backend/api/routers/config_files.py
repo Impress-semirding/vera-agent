@@ -17,6 +17,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.access import can_edit_agent
 from api.api_response import current_user, ok
 from api.database import get_db
 from api.models import models as M
@@ -105,6 +106,8 @@ async def create_config_file(
     agent = (await db.execute(select(M.Agent).where(M.Agent.id == agent_id))).scalar_one_or_none()
     if agent is None:
         raise HTTPException(status_code=404, detail=f"agent {agent_id} not found")
+    if not await can_edit_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权编辑该智能体")
     if await _find(db, agent_id, data.path) is not None:
         raise HTTPException(status_code=409, detail=f"config file {data.path} already exists")
 
@@ -125,6 +128,8 @@ async def upsert_config_file(
     agent = (await db.execute(select(M.Agent).where(M.Agent.id == agent_id))).scalar_one_or_none()
     if agent is None:
         raise HTTPException(status_code=404, detail=f"agent {agent_id} not found")
+    if not await can_edit_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权编辑该智能体")
 
     f = await _find(db, agent_id, path)
     if f is None:
@@ -146,6 +151,11 @@ async def delete_config_file(
     f = await _find(db, agent_id, path)
     if f is None:
         raise HTTPException(status_code=404, detail=f"config file {path} not found")
+    agent = (await db.execute(select(M.Agent).where(M.Agent.id == agent_id))).scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"agent {agent_id} not found")
+    if not await can_edit_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权编辑该智能体")
     await db.delete(f)
     await db.commit()
     return ok(message="deleted")

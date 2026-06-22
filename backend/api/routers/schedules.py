@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.api_response import current_user, ok
-from api.access import can_access_agent
+from api.access import can_access_agent, can_edit_agent
 from api.database import get_db
 from api.models import models as M
 from api.scheduler.cron_util import next_run, validate_cron
@@ -131,7 +131,9 @@ async def create_schedule(
     db: AsyncSession = Depends(get_db),
     user: str = Depends(current_user),
 ):
-    await _get_agent_or_403(db, agent_id, user)
+    agent = await _get_agent_or_403(db, agent_id, user)
+    if not await can_edit_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权编辑该智能体")
     await _validate_session(db, data.session_id, agent_id)
     if not validate_cron(data.cron):
         raise HTTPException(status_code=400, detail=f"无效的 cron 表达式: {data.cron}")
@@ -211,7 +213,9 @@ async def update_schedule(
     db: AsyncSession = Depends(get_db),
     user: str = Depends(current_user),
 ):
-    await _get_agent_or_403(db, agent_id, user)
+    agent = await _get_agent_or_403(db, agent_id, user)
+    if not await can_edit_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权编辑该智能体")
     task = (await db.execute(
         select(M.ScheduledTask).where(M.ScheduledTask.id == task_id, M.ScheduledTask.agent_id == agent_id)
     )).scalar_one_or_none()
@@ -257,7 +261,9 @@ async def delete_schedule(
     db: AsyncSession = Depends(get_db),
     user: str = Depends(current_user),
 ):
-    await _get_agent_or_403(db, agent_id, user)
+    agent = await _get_agent_or_403(db, agent_id, user)
+    if not await can_edit_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权编辑该智能体")
     task = (await db.execute(
         select(M.ScheduledTask).where(M.ScheduledTask.id == task_id, M.ScheduledTask.agent_id == agent_id)
     )).scalar_one_or_none()
@@ -275,7 +281,9 @@ async def toggle_schedule(
     db: AsyncSession = Depends(get_db),
     user: str = Depends(current_user),
 ):
-    await _get_agent_or_403(db, agent_id, user)
+    agent = await _get_agent_or_403(db, agent_id, user)
+    if not await can_edit_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权编辑该智能体")
     task = (await db.execute(
         select(M.ScheduledTask).where(M.ScheduledTask.id == task_id, M.ScheduledTask.agent_id == agent_id)
     )).scalar_one_or_none()

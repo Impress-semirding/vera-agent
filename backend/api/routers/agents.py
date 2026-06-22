@@ -15,11 +15,11 @@ from sqlalchemy import delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from api.api_response import current_user, iso, ok
-from api.access import can_access_agent
+from api.access import can_access_agent, can_delete_agent, can_edit_agent, get_user_agent_permissions
 from api.database import get_db
 from api.models import models as M
 from api.schemas import schemas as S
-from api.util import new_id
+from api.util import jload, new_id
 
 router = APIRouter(tags=["agents"])
 
@@ -99,7 +99,30 @@ async def list_agents(
     stmt = stmt.offset((page - 1) * pageSize).limit(pageSize)
     items = (await db.execute(stmt)).scalars().all()
 
-    return ok({"items": [_agent_out(a) for a in items], "total": total, "page": page, "pageSize": pageSize})
+    # Batch-fetch permissions for all visible agents so the frontend can show
+    # delete buttons only to users who have 'delete' on each one.
+    agent_ids = [a.id for a in items]
+    perm_map: dict[str, list[str]] = {}
+    if agent_ids:
+        perm_rows = (
+            await db.execute(
+                select(M.Permission).where(
+                    M.Permission.agent_id.in_(agent_ids),
+                    M.Permission.user_name == user,
+                )
+            )
+        ).scalars().all()
+        perm_map = {p.agent_id: jload(p.agent_permissions) or [] for p in perm_rows}
+
+    def _agent_out_with_perms(a: M.Agent) -> dict:
+        out = _agent_out(a)
+        if a.created_by == user:
+            out["permissions"] = ["view", "edit", "delete"]
+        else:
+            out["permissions"] = perm_map.get(a.id, [])
+        return out
+
+    return ok({"items": [_agent_out_with_perms(a) for a in items], "total": total, "page": page, "pageSize": pageSize})
 
 
 @router.get("/agents/{agent_id}")
@@ -111,7 +134,9 @@ async def get_agent(
     agent = await _get_agent(db, agent_id)
     if not await can_access_agent(db, agent, user):
         raise HTTPException(status_code=403, detail="无权访问该智能体")
-    return ok(_agent_out(agent))
+    result = _agent_out(agent)
+    result["permissions"] = await get_user_agent_permissions(db, agent_id, user)
+    return ok(result)
 
 
 @router.post("/agents")
@@ -149,6 +174,8 @@ async def update_agent(
     user: str = Depends(current_user),
 ):
     agent = await _get_agent(db, agent_id)
+    if not await can_edit_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权编辑该智能体")
     field_map = {
         "name": "name",
         "description": "description",
@@ -176,6 +203,8 @@ async def update_agent(
 @router.delete("/agents/{agent_id}")
 async def delete_agent(agent_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     agent = await _get_agent(db, agent_id)
+    if not await can_delete_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权删除该智能体")
 
     # Cascade-delete everything that belongs to this agent so nothing orphans.
     session_ids = select(M.Session.id).where(M.Session.agent_id == agent_id)

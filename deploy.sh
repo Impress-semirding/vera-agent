@@ -118,7 +118,8 @@ if ! command -v pnpm &>/dev/null; then
     npm install -g pnpm --silent
 fi
 pnpm install --silent
-echo "  ✓ 前端依赖安装完成"
+pnpm run build
+echo "  ✓ 前端依赖安装 + 构建完成"
 echo ""
 
 # ── 5. 配置 .env + JWT 密钥对 ────────────────────────────────────────────
@@ -173,7 +174,7 @@ echo "  AGENT_USE_DOCKER=1 python -m uvicorn api.main:app --host 0.0.0.0 --port 
 echo ""
 echo "启动服务（后台生产）："
 echo "  cd $FRONTEND_DIR"
-echo "  nohup npx vite --host 0.0.0.0 --port 3000 > $LOG_DIR/vera-frontend.log 2>&1 & disown"
+echo "  nohup npx vite preview --host 0.0.0.0 --port 3000 > $LOG_DIR/vera-frontend.log 2>&1 & disown"
 echo ""
 echo "  cd $BACKEND_DIR && source .venv/bin/activate"
 echo "  nohup .venv/bin/uvicorn api.main:app --host 0.0.0.0 --port 18080 > $LOG_DIR/vera-backend.log 2>&1 & disown"

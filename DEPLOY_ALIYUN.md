@@ -52,7 +52,7 @@ pip install --upgrade pip -i https://pypi.tuna.tsinghua.edu.cn/simple/
 pip install -e . -i https://pypi.tuna.tsinghua.edu.cn/simple/
 
 # 前端
-cd ../frontend && pnpm install
+cd ../frontend && pnpm install && pnpm run build
 ```
 
 ---
@@ -161,7 +161,7 @@ docker build -t vera-agent-runner:latest ./agent_runtime/claude/docker/
 ```bash
 # ── 前端 ──────────────────────────────────────
 cd /home/vera-agent-main/frontend
-nohup npx vite --host 0.0.0.0 --port 3000 > /var/log/vera-frontend.log 2>&1 &
+nohup npx vite preview --host 0.0.0.0 --port 3000 > /var/log/vera-frontend.log 2>&1 &
 disown
 
 # ── 后端 ──────────────────────────────────────

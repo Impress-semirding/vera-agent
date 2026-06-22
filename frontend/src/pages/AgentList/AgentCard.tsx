@@ -1,5 +1,5 @@
-import { Tag } from 'antd';
-import { StarFilled, StarOutlined } from '@ant-design/icons';
+import { Tag, Popconfirm, message } from 'antd';
+import { StarFilled, StarOutlined, DeleteOutlined } from '@ant-design/icons';
 import { useNavigate } from 'react-router-dom';
 import type { Agent } from '@/types/agent';
 import { useAgentStore } from '@/stores/useAgentStore';
@@ -13,7 +13,18 @@ const MODE_COLORS = { claude: 'geekblue', normal: 'default' };
 export default function AgentCard({ agent }: { agent: Agent }) {
   const navigate = useNavigate();
   const toggleStar = useAgentStore((s) => s.toggleStar);
+  const deleteAgent = useAgentStore((s) => s.deleteAgent);
   const initial = agent.name.charAt(0).toUpperCase();
+  const canDelete = agent.permissions?.includes('delete') ?? false;
+
+  const handleDelete = async () => {
+    try {
+      await deleteAgent(agent.id);
+      message.success('已删除');
+    } catch {
+      message.error('删除失败');
+    }
+  };
 
   return (
     <div className={styles.card} onClick={() => navigate(`/chat/${agent.id}`)}>
@@ -42,6 +53,19 @@ export default function AgentCard({ agent }: { agent: Agent }) {
         <span>{agent.updatedBy}</span>
         <span>·</span>
         <span>{new Date(agent.updatedAt).toLocaleDateString('zh-CN')}</span>
+        {canDelete && (
+          <span onClick={(e) => e.stopPropagation()} style={{ marginLeft: 'auto' }}>
+            <Popconfirm
+              title="确认删除该智能体？"
+              description="删除后不可恢复"
+              onConfirm={handleDelete}
+            >
+              <span className={styles.deleteBtn}>
+                <DeleteOutlined />
+              </span>
+            </Popconfirm>
+          </span>
+        )}
       </div>
     </div>
   );

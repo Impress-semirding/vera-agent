@@ -12,6 +12,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from api.access import can_edit_agent, get_user_agent_permissions
 from api.api_response import current_user, ok
 from api.database import get_db
 from api.models import models as M
@@ -20,6 +21,29 @@ from api.util import jdump, jload, new_id
 
 router = APIRouter(tags=["permissions"])
 
+
+# ─── User picker (for permission assignment) ────────────────────────────
+
+@router.get("/users")
+async def list_users_for_permission(
+    q: str = "",
+    db: AsyncSession = Depends(get_db),
+    _user: str = Depends(current_user),
+):
+    """List users (id + name + email) for the permission picker. Not admin-only."""
+    stmt = select(M.User).order_by(M.User.name.asc())
+    rows = (await db.execute(stmt)).scalars().all()
+    result = [
+        {"id": u.id, "name": u.name, "email": u.email, "avatarUrl": u.avatar_url}
+        for u in rows
+    ]
+    if q:
+        ql = q.lower()
+        result = [u for u in result if ql in u["name"].lower() or ql in (u["email"] or "").lower()]
+    return ok(result)
+
+
+# ─── Helpers ───────────────────────────────────────────────────────────
 
 def _permission_out(p: M.Permission) -> dict:
     return {
@@ -58,6 +82,20 @@ async def create_permission(
     agent = (await db.execute(select(M.Agent).where(M.Agent.id == agent_id))).scalar_one_or_none()
     if agent is None:
         raise HTTPException(status_code=404, detail=f"agent {agent_id} not found")
+    if not await can_edit_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权管理该智能体的权限")
+
+    # 去重：同一个 agent 下同一个用户只能有一条权限记录
+    existing = (
+        await db.execute(
+            select(M.Permission).where(
+                M.Permission.agent_id == agent_id,
+                M.Permission.user_name == data.userName,
+            )
+        )
+    ).scalar_one_or_none()
+    if existing is not None:
+        raise HTTPException(status_code=409, detail="该用户已有权限记录，请使用编辑功能修改")
 
     perm = M.Permission(
         id=new_id(),
@@ -82,6 +120,11 @@ async def update_permission(
     user: str = Depends(current_user),
 ):
     perm = await _get_permission(db, permission_id)
+    agent = (await db.execute(select(M.Agent).where(M.Agent.id == perm.agent_id))).scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"agent {perm.agent_id} not found")
+    if not await can_edit_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权管理该智能体的权限")
     if data.userName is not None:
         perm.user_name = data.userName
     if data.userEmail is not None:
@@ -100,6 +143,11 @@ async def update_permission(
 @router.delete("/permissions/{permission_id}")
 async def delete_permission(permission_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     perm = await _get_permission(db, permission_id)
+    agent = (await db.execute(select(M.Agent).where(M.Agent.id == perm.agent_id))).scalar_one_or_none()
+    if agent is None:
+        raise HTTPException(status_code=404, detail=f"agent {perm.agent_id} not found")
+    if not await can_edit_agent(db, agent, user):
+        raise HTTPException(status_code=403, detail="无权管理该智能体的权限")
     await db.delete(perm)
     await db.commit()
     return ok(message="deleted")
