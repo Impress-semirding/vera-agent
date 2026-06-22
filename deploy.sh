@@ -130,13 +130,15 @@ mkdir -p "$DATA_DIR"
 
 # .env 由用户手动准备，脚本仅注入 JWT 私钥
 
-# 强制重新生成 JWT 密钥对，并自动写入 .env
-echo "  生成 JWT 密钥对 ..."
-rm -f mcp_jwt_private.pem mcp_jwt_public.pem
-openssl genrsa -out mcp_jwt_private.pem 2048
-openssl rsa -in mcp_jwt_private.pem -pubout -out mcp_jwt_public.pem
-PRIV_ONELINE="$(awk 'NF{printf "%s\\n",$0}' mcp_jwt_private.pem)"
-"$PYTHON_BIN" -c "
+# JWT 密钥对仅在首次部署时生成，避免覆盖已有密钥
+if [ -f mcp_jwt_private.pem ] && [ -f mcp_jwt_public.pem ]; then
+    echo "  JWT 密钥对已存在，跳过"
+else
+    echo "  生成 JWT 密钥对 ..."
+    openssl genrsa -out mcp_jwt_private.pem 2048
+    openssl rsa -in mcp_jwt_private.pem -pubout -out mcp_jwt_public.pem
+    PRIV_ONELINE="$(awk 'NF{printf "%s\\n",$0}' mcp_jwt_private.pem)"
+    "$PYTHON_BIN" -c "
 import sys
 with open('.env','r') as f:
     lines = f.readlines()
@@ -147,9 +149,10 @@ with open('.env','w') as f:
         else:
             f.write(line)
 " "$PRIV_ONELINE"
-echo "  ✓ 密钥对已生成"
-echo "    私钥 → .env (VERA_MCP_JWT_PRIVATE_KEY)"
-echo "    公钥 → $BACKEND_DIR/mcp_jwt_public.pem（请拷到 MCP server）"
+    echo "  ✓ 密钥对已生成"
+    echo "    私钥 → .env (VERA_MCP_JWT_PRIVATE_KEY)"
+    echo "    公钥 → $BACKEND_DIR/mcp_jwt_public.pem（请拷到 MCP server）"
+fi
 echo ""
 
 # ── 6. 构建 Docker 镜像 ──────────────────────────────────────────────────
