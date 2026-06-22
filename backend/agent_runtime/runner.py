@@ -73,6 +73,56 @@ _final_emitted: bool = False
 
 
 # ═══════════════════════════════════════════════════════════════════════
+# Session metadata persistence (for resume across container restarts)
+# ═══════════════════════════════════════════════════════════════════════
+
+def _meta_file_path() -> str | None:
+    ccd = os.environ.get("CLAUDE_CONFIG_DIR", "")
+    if ccd:
+        return os.path.join(ccd, "session-meta.json")
+    if _config is None or not _config.cwd:
+        return None
+    return os.path.join(_config.cwd, ".claude-sessions", "session-meta.json")
+
+
+def _read_persisted_session_id() -> str | None:
+    path = _meta_file_path()
+    if not path or not os.path.isfile(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        sid = data.get("sdkSessionId")
+        return sid if isinstance(sid, str) and sid else None
+    except Exception:
+        return None
+
+
+def _write_persisted_session_id(sdk_session_id: str) -> None:
+    path = _meta_file_path()
+    if not path:
+        return
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        existing: dict = {}
+        if os.path.isfile(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    existing = json.load(f) or {}
+            except Exception:
+                existing = {}
+        import time as _time
+        now_ms = int(_time.time() * 1000)
+        existing["sdkSessionId"] = sdk_session_id
+        existing.setdefault("createdAt", now_ms)
+        existing["lastActiveAt"] = now_ms
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(existing, f, ensure_ascii=False, indent=2)
+    except Exception:
+        pass
+
+
+# ═══════════════════════════════════════════════════════════════════════
 # Backend dispatch
 # ═══════════════════════════════════════════════════════════════════════
 
@@ -123,15 +173,28 @@ async def _process_turn_claude(text: str) -> None:
         },
     )
 
+    # Resume logic:
+    #   • Within the same runner process, `_session_id` is the CLI-issued
+    #     session id from a prior turn — use it directly.
+    #   • Across container restarts, read the persisted session id from
+    #     .claude-sessions/session-meta.json (written on every init event).
     if _session_id:
         options.resume = _session_id
-    elif _config.sdk_session_id:
-        options.resume = _config.sdk_session_id
+    else:
+        _persisted = _read_persisted_session_id()
+        if _persisted:
+            options.resume = _persisted
 
     os.environ["ANTHROPIC_API_KEY"] = _config.api_key
     os.environ["ANTHROPIC_BASE_URL"] = _config.base_url
     os.environ.setdefault("CLAUDE_CODE_DISABLE_NON_ESSENTIAL_TTY", "1")
     os.environ.setdefault("CLAUDE_CODE_HEADLESS", "1")
+
+    _ccd = os.environ.get("CLAUDE_CONFIG_DIR", "<unset>")
+    _emitter.emit_delta(
+        "reasoning",
+        f"→ CLAUDE_CONFIG_DIR={_ccd} | resume={options.resume}",
+    )
 
     _emitter.emit_delta("reasoning", f"→ 模型: {_config.model}")
 
@@ -211,7 +274,15 @@ async def _handle_claude_message(msg) -> None:
         if hasattr(msg, "subtype") and msg.subtype == "init":
             data = getattr(msg, "data", {}) or {}
             if isinstance(data, dict):
-                _session_id = data.get("session_id", _session_id)
+                _new_sid = data.get("session_id")
+                if _new_sid:
+                    if _new_sid != _session_id:
+                        _emitter.emit_delta(
+                            "reasoning",
+                            f"← SDK session_id={_new_sid} (was {_session_id or '<none>'})",
+                        )
+                    _session_id = _new_sid
+                    _write_persisted_session_id(_new_sid)
         return
 
     if mt == "StreamEvent":
