@@ -135,7 +135,12 @@ async def _execute_task(task) -> None:
     # Resolve or create session
     if not session_id:
         async with async_session() as db:
-            session = M.Session(id=new_id(), agent_id=agent_id, name=f"[定时] {task.name}")
+            session = M.Session(
+                id=new_id(),
+                agent_id=agent_id,
+                name=f"[定时] {task.name}",
+                created_by=user_id,
+            )
             db.add(session)
             await db.commit()
             session_id = session.id

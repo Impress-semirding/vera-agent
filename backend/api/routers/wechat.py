@@ -91,10 +91,17 @@ async def _get_or_create_wechat_session(agent_id: str, user_id: str) -> M.Sessio
         ).scalar_one_or_none()
 
         if session is None:
+            # 微信会话由外部微信用户触发，无登录态；归属设为该 agent 的创建者，
+            # 以便 owner 能在网页端看到微信侧进来的会话（被授权人不可见）。
+            agent = (
+                await db.execute(select(M.Agent).where(M.Agent.id == agent_id))
+            ).scalar_one_or_none()
+            owner = agent.created_by if agent else None
             session = M.Session(
                 id=new_id(),
                 agent_id=agent_id,
                 name=session_name,
+                created_by=owner,
             )
             db.add(session)
             await db.commit()

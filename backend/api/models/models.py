@@ -33,6 +33,8 @@ class Session(Base):
     project_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("projects.id"))
     sdk_session_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    # 会话归属人（User.name）。授权后多人共用同一 agent，按人隔离会话列表，互不可见。
+    created_by: Mapped[str | None] = mapped_column(String(100), nullable=True)
 
 
 class Message(Base):

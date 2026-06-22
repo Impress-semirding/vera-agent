@@ -99,3 +99,13 @@ async def _migrate(conn) -> None:
         for (sid,) in rows:
             await conn.execute(text("UPDATE sessions SET sdk_session_id = :uid WHERE id = :sid"),
                               {"uid": str(_uuid.uuid4()), "sid": sid})
+
+    # sessions: add created_by for per-user session isolation (agent 授权后多人共用同一 agent)
+    if session_cols and "created_by" not in session_cols:
+        await conn.execute(text("ALTER TABLE sessions ADD COLUMN created_by VARCHAR(100)"))
+        # 回填历史会话（created_by IS NULL）为所属 agent 的创建者；幂等：只动 NULL 行。
+        await conn.execute(text(
+            "UPDATE sessions SET created_by = ("
+            "  SELECT a.created_by FROM agents a WHERE a.id = sessions.agent_id"
+            ") WHERE sessions.created_by IS NULL"
+        ))

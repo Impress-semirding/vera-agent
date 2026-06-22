@@ -30,6 +30,7 @@ def _session_out(s: M.Session, last_at=None) -> dict:
         "projectId": s.project_id,
         "createdAt": iso(s.created_at),
         "lastMessageAt": iso(last_at) if last_at else None,
+        "createdBy": s.created_by,
     }
 
 
@@ -51,7 +52,7 @@ async def list_sessions(agent_id: str, db: AsyncSession = Depends(get_db), user:
                 func.coalesce(func.max(M.Message.created_at), M.Session.created_at).label("last_activity"),
             )
             .outerjoin(M.Message, M.Message.session_id == M.Session.id)
-            .where(M.Session.agent_id == agent_id)
+            .where(M.Session.agent_id == agent_id, M.Session.created_by == user)
             .group_by(M.Session.id)
             .order_by(func.coalesce(func.max(M.Message.created_at), M.Session.created_at).desc())
         )
@@ -84,6 +85,7 @@ async def create_session(
         name=data.name or "新会话",
         project_id=data.projectId,
         sdk_session_id=str(_uuid.uuid4()),
+        created_by=user,
     )
     db.add(session)
     await db.commit()
@@ -99,6 +101,8 @@ async def update_session(
     user: str = Depends(current_user),
 ):
     session = await _get_session(db, session_id)
+    if session.created_by != user:
+        raise HTTPException(status_code=403, detail="无权修改他人会话")
     if data.name is not None:
         session.name = data.name
     await db.commit()
@@ -109,6 +113,8 @@ async def update_session(
 @router.delete("/sessions/{session_id}")
 async def delete_session(session_id: str, db: AsyncSession = Depends(get_db), user: str = Depends(current_user)):
     session = await _get_session(db, session_id)
+    if session.created_by != user:
+        raise HTTPException(status_code=403, detail="无权删除他人会话")
     await db.execute(delete(M.Message).where(M.Message.session_id == session_id))
     await db.delete(session)
     await db.commit()

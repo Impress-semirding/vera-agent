@@ -112,6 +112,7 @@ class SessionOut(BaseModel):
     projectId: str | None
     createdAt: str
     lastMessageAt: str | None = None
+    createdBy: str | None = None
 
 
 class MessageSend(BaseModel):
