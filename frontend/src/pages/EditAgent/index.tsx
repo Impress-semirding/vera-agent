@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState, memo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
   Button, Tag, Input, Switch, Spin,
@@ -125,10 +125,9 @@ export default function EditAgentPage() {
   const [activePanel, setActivePanel] = useState<string | null>(null);
   const [rightView, setRightView] = useState<RightView>('chat');
 
-  // Sessions (sidebar) + chat input.
+  // Sessions (sidebar) + chat.
   const creatingSessionRef = useRef(false);
   const [sessions, setSessions] = useState<{ id: string; name: string }[]>([]);
-  const [chatInput, setChatInput] = useState('');
   const [artifactOpen, setArtifactOpen] = useState(false);
   const [artifactTab, setArtifactTab] = useState<'browser' | 'file'>('browser');
 
@@ -197,23 +196,19 @@ export default function EditAgentPage() {
       .catch(() => message.error('重置失败'));
   }, [sessionId, stop]);
 
-  const handleSend = (overrideText?: string) => {
-    const text = overrideText ?? chatInput;
+  const handleSend = useCallback((text: string) => {
     if (!text.trim()) return;
     if (!sessionId) {
       if (creatingSessionRef.current) return;
       creatingSessionRef.current = true;
-      // No session yet: create one + navigate, but DON'T send the message.
-      // The text stays in the input box; user presses Enter again to send.
       sessionService.create(agentId!).then(res => {
         creatingSessionRef.current = false;
         if (res.data?.id) handleSessionCreated(res.data.id);
       }).catch(() => { creatingSessionRef.current = false; message.error('创建会话失败'); });
       return;
     }
-    setChatInput('');
     void send(text);
-  };
+  }, [agentId, sessionId, send, handleSessionCreated]);
 
   if (agentLoading) {
     return (
@@ -341,8 +336,6 @@ export default function EditAgentPage() {
             hasSession={!!sessionId}
             messages={messages}
             streaming={streaming}
-            chatInput={chatInput}
-            onChatInputChange={setChatInput}
             onSend={handleSend}
             onStop={stop}
             onClear={clear}
@@ -432,12 +425,12 @@ export default function EditAgentPage() {
 // ═══════════════════════════════════════════════════
 
 // ─── Chat Panel ─────────────────────────────────
-function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, streaming, chatInput, onChatInputChange, onSend, onStop, onClear, artifactOpen, artifactTab, artifacts, onToggleArtifact, onArtifactTabChange, sessionId, onResetContext }: {
+function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, streaming, onSend, onStop, onClear, artifactOpen, artifactTab, artifacts, onToggleArtifact, onArtifactTabChange, sessionId, onResetContext }: {
   agentName: string; agentType: string; sessionName: string;
   hasSession: boolean;
   messages: ChatMsg[];
   streaming: boolean;
-  chatInput: string; onChatInputChange: (v: string) => void; onSend: (text?: string) => void; onStop: () => void;
+  onSend: (text: string) => void; onStop: () => void;
   onClear: () => void; artifactOpen: boolean; artifactTab: 'browser' | 'file';
   artifacts: { name: string; path: string; size: number }[];
   onToggleArtifact: () => void; onArtifactTabChange: (t: 'browser' | 'file') => void;
@@ -579,7 +572,7 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
                   </Button>
                 </div>
               )}
-              <ChatInputArea value={chatInput} onChange={onChatInputChange} onSend={onSend} onStop={onStop} streaming={streaming} sessionId={sessionId} onResetContext={onResetContext} />
+              <ChatInputArea onSend={onSend} onStop={onStop} streaming={streaming} sessionId={sessionId} onResetContext={onResetContext} />
             </div>
             {/* Artifact sidebar */}
             {artifactOpen && <ArtifactSidebar tab={artifactTab} artifacts={artifacts} onTabChange={onArtifactTabChange} onClose={onToggleArtifact} />}
@@ -596,7 +589,7 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
             <span style={{ fontWeight: 500, color: '#000000a6' }}>{agentName}</span> · {agentType === 'system' ? 'Claude Code' : ''}
           </p>
           <div style={{ width: '100%', maxWidth: 640 }}>
-            <ChatInputArea value={chatInput} onChange={onChatInputChange} onSend={onSend} onStop={onStop} streaming={streaming} large />
+            <ChatInputArea onSend={onSend} onStop={onStop} streaming={streaming} large />
             <p style={{ fontSize: 12, textAlign: 'center', color: '#00000040', marginTop: 8 }}>Enter 发送 · Shift+Enter 换行</p>
           </div>
         </div>
@@ -606,10 +599,11 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
 }
 
 // ─── Chat Input Area ─────────────────────────────
-function ChatInputArea({ value, onChange, onSend, onStop, streaming, large, sessionId, onResetContext }: {
-  value: string; onChange: (v: string) => void; onSend: (text?: string) => void; onStop: () => void;
+const ChatInputArea = memo(function ChatInputArea({ onSend, onStop, streaming, large, sessionId, onResetContext }: {
+  onSend: (text: string) => void; onStop: () => void;
   streaming?: boolean; large?: boolean; sessionId?: string; onResetContext?: () => void;
 }) {
+  const [value, setValue] = useState('');
   const inputHasText = value.trim().length > 0;
   const showStop = streaming && !inputHasText;
   const canSend = inputHasText;
@@ -697,6 +691,7 @@ function ChatInputArea({ value, onChange, onSend, onStop, streaming, large, sess
     }
     if (!finalText.trim()) return;
     setUploadedFiles([]);
+    setValue('');
     onSend(finalText);
   };
 
@@ -717,7 +712,7 @@ function ChatInputArea({ value, onChange, onSend, onStop, streaming, large, sess
           <Input.TextArea
             ref={inputRef}
             value={value}
-            onChange={(e) => onChange(e.target.value)}
+            onChange={(e) => setValue(e.target.value)}
             placeholder="发送消息…（支持粘贴图片）"
             autoSize={{ minRows: large ? 5 : 3, maxRows: 9 }}
             style={{ border: 'none', boxShadow: 'none', resize: 'none', padding: '12px 16px 4px', borderRadius: 12 }}
@@ -761,7 +756,7 @@ function ChatInputArea({ value, onChange, onSend, onStop, streaming, large, sess
       </div>
     </div>
   );
-}
+});
 
 // ─── Artifact Sidebar ────────────────────────────
 function ArtifactSidebar({ tab, artifacts, onTabChange, onClose }: {
