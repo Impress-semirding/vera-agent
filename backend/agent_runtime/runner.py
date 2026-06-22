@@ -59,6 +59,7 @@ class RunnerConfig:
         self.mcp_servers: list[dict] = data.get("mcpServers", [])
         self.allowed_tools: list[str] = data.get("allowedTools", [])
         self.max_turns: int = data.get("maxTurns", 50)
+        self.sdk_session_id: str = data.get("sdkSessionId", "")
 
 
 # ═══════════════════════════════════════════════════════════════════════
@@ -124,6 +125,8 @@ async def _process_turn_claude(text: str) -> None:
 
     if _session_id:
         options.resume = _session_id
+    elif _config.sdk_session_id:
+        options.resume = _config.sdk_session_id
 
     os.environ["ANTHROPIC_API_KEY"] = _config.api_key
     os.environ["ANTHROPIC_BASE_URL"] = _config.base_url
@@ -344,6 +347,10 @@ def main() -> None:
             _emitter = StreamEmitter(_config.cwd)
             os.makedirs(_config.cwd, exist_ok=True)
             os.chdir(_config.cwd)
+            # Persist SDK sessions on a mounted volume so resume works across
+            # container restarts.
+            os.environ.setdefault("CLAUDE_CONFIG_DIR", os.path.join(_config.cwd, ".claude-sessions"))
+            os.makedirs(os.environ["CLAUDE_CONFIG_DIR"], exist_ok=True)
             _emitter.emit_ready(_config.model)
 
         elif cmd_type == "user_input":

@@ -59,6 +59,12 @@ async def build_claude_config(
         config.model = model_config.model_id
 
     async with async_session() as db:
+        # ── SDK session ID (UUID) for resume across container restarts ──
+        session_row = (await db.execute(
+            select(M.Session).where(M.Session.id == session_id)
+        )).scalar_one_or_none()
+        if session_row:
+            config.sdk_session_id = session_row.sdk_session_id
         # ── Skills ──
         skills_result = await db.execute(
             select(M.Skill).where(

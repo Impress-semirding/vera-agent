@@ -31,6 +31,7 @@ class ClaudeAgentConfig:
     mcp_servers: list[dict] = field(default_factory=list)
     allowed_tools: list[str] = field(default_factory=list)
     max_turns: int = 200
+    sdk_session_id: str = ""
 
 
 class ClaudeAgentClient:

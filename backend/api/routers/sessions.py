@@ -17,6 +17,7 @@ from api.database import get_db
 from api.models import models as M
 from api.schemas import schemas as S
 from api.util import new_id
+import uuid as _uuid
 
 router = APIRouter(tags=["sessions"])
 
@@ -82,6 +83,7 @@ async def create_session(
         agent_id=agent_id,
         name=data.name or "新会话",
         project_id=data.projectId,
+        sdk_session_id=str(_uuid.uuid4()),
     )
     db.add(session)
     await db.commit()

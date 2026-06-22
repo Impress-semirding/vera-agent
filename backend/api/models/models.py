@@ -31,6 +31,7 @@ class Session(Base):
     agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id"), nullable=False)
     name: Mapped[str] = mapped_column(String(200), nullable=False)
     project_id: Mapped[str | None] = mapped_column(String(64), ForeignKey("projects.id"))
+    sdk_session_id: Mapped[str] = mapped_column(String(36), nullable=False, unique=True)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 

@@ -91,10 +91,12 @@ class DockerAgentClient:
         os.makedirs(os.path.join(config.cwd, ".claude-persist"), exist_ok=True)
         # CLI stores conversation history here (NOT in ~/.claude/)
         os.makedirs(os.path.join(config.cwd, ".claude-cache"), exist_ok=True)
+        os.makedirs(os.path.join(config.cwd, ".claude-sessions"), exist_ok=True)
         os.chmod(config.cwd, 0o777)
         os.chmod(os.path.join(config.cwd, "output"), 0o777)
         os.chmod(os.path.join(config.cwd, ".claude-persist"), 0o777)
         os.chmod(os.path.join(config.cwd, ".claude-cache"), 0o777)
+        os.chmod(os.path.join(config.cwd, ".claude-sessions"), 0o777)
 
         cmd = [
             "docker", "run", "-i", "--rm",
@@ -105,11 +107,14 @@ class DockerAgentClient:
             "-v", f"{os.path.abspath(os.path.join(config.cwd, '.claude-persist'))}:/home/agent/.claude",
             # Mount Claude CLI conversation history (where sessions are actually stored)
             "-v", f"{os.path.abspath(os.path.join(config.cwd, '.claude-cache'))}:/home/agent/.cache/claude-cli-nodejs",
+            # Mount SDK session storage (persists across container restarts for resume)
+            "-v", f"{os.path.abspath(os.path.join(config.cwd, '.claude-sessions'))}:/home/agent/.claude-sessions",
             # Pass env vars
             "-e", f"ANTHROPIC_API_KEY={config.api_key}",
             "-e", f"ANTHROPIC_BASE_URL={config.base_url}",
             "-e", "CLAUDE_CODE_DISABLE_NON_ESSENTIAL_TTY=1",
             "-e", "CLAUDE_CODE_HEADLESS=1",
+            "-e", "CLAUDE_CONFIG_DIR=/home/agent/.claude-sessions",
             # Network
             "--network", "host" if sys.platform == "linux" else "bridge",
             _get_image_name(),
@@ -137,6 +142,7 @@ class DockerAgentClient:
             "mcpServers": config.mcp_servers,
             "allowedTools": config.allowed_tools,
             "maxTurns": config.max_turns,
+            "sdkSessionId": config.sdk_session_id,
         })
 
         # Wait for ready (with timeout)

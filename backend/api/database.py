@@ -88,3 +88,14 @@ async def _migrate(conn) -> None:
         await conn.execute(text("ALTER TABLE scheduled_tasks ADD COLUMN script_name VARCHAR(200)"))
     if sched_cols and "task_type" not in sched_cols:
         await conn.execute(text("ALTER TABLE scheduled_tasks ADD COLUMN task_type VARCHAR(20) DEFAULT 'agent'"))
+
+    # sessions: add sdk_session_id for Claude SDK resume across container restarts
+    session_cols = {r[1] for r in (await conn.execute(text("PRAGMA table_info(sessions)"))).fetchall()}
+    if session_cols and "sdk_session_id" not in session_cols:
+        await conn.execute(text("ALTER TABLE sessions ADD COLUMN sdk_session_id VARCHAR(36) DEFAULT ''"))
+        # Backfill existing rows with UUIDs
+        import uuid as _uuid
+        rows = (await conn.execute(text("SELECT id FROM sessions WHERE sdk_session_id = ''"))).fetchall()
+        for (sid,) in rows:
+            await conn.execute(text("UPDATE sessions SET sdk_session_id = :uid WHERE id = :sid"),
+                              {"uid": str(_uuid.uuid4()), "sid": sid})
