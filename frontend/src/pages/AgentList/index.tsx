@@ -15,13 +15,13 @@ export default function AgentListPage() {
   }, [mode, typeFilter, mineOnly, starredOnly, fetchAgents]);
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f5f5f5' }}>
+    <div className="app-page">
       <AgentListHeader />
       <Spin spinning={loading}>
         {agents.length === 0 && !loading ? (
           <Empty description="暂无智能体" style={{ marginTop: 120 }} />
         ) : (
-          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, 1fr)', gap: 16, padding: 24 }}>
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))', gap: 'var(--space-4)', padding: 'var(--space-6)' }}>
             {agents.map((agent) => (
               <AgentCard key={agent.id} agent={agent} />
             ))}

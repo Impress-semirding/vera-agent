@@ -4,7 +4,7 @@ import {
 } from 'antd';
 import {
   CodeOutlined, DeleteOutlined, DownloadOutlined,
-  FileTextOutlined, InboxOutlined, PlusOutlined,
+  FileTextOutlined, FolderOutlined, InboxOutlined, PlusOutlined,
 } from '@ant-design/icons';
 import { FormCard } from '../components/FormParts';
 import { skillService } from '@/services/skillService';
@@ -159,7 +159,7 @@ export default function SkillConfigPanel({ agentId }: { agentId: string }) {
                   onClick={() => setExpandedId(expanded ? null : skill.id)}
                 >
                   <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-                    <span style={{ fontSize: 16 }}>📁</span>
+                    <span style={{ fontSize: 16, color: 'var(--color-primary)' }}><FolderOutlined /></span>
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontWeight: 500, fontSize: 14 }}>
                         {skill.name} <span style={{ color: '#00000073', fontWeight: 400 }}>v{skill.version}</span>

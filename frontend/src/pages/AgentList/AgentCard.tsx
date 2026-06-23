@@ -5,8 +5,6 @@ import type { Agent } from '@/types/agent';
 import { useAgentStore } from '@/stores/useAgentStore';
 import styles from './index.module.less';
 
-const TYPE_LABELS = { system: 'Cluade code' };
-const TYPE_COLORS = { system: 'blue', personal: 'green' };
 const MODE_LABELS = { claude: 'Claude Code', normal: '普通模式' };
 const MODE_COLORS = { claude: 'geekblue', normal: 'default' };
 
@@ -33,7 +31,6 @@ export default function AgentCard({ agent }: { agent: Agent }) {
         <div className={styles.cardInfo}>
           <div className={styles.cardName}>{agent.name}</div>
           <div className={styles.cardBadges}>
-            <Tag color={TYPE_COLORS[agent.type]}>{TYPE_LABELS[agent.type]}</Tag>
             <Tag color={MODE_COLORS[agent.mode]}>{MODE_LABELS[agent.mode]}</Tag>
           </div>
         </div>

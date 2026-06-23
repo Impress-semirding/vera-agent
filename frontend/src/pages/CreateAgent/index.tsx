@@ -38,15 +38,11 @@ export default function CreateAgentPage() {
   };
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f5f5f5' }}>
+    <div className="app-page">
       {/* Header */}
-      <div style={{
-        display: 'flex', alignItems: 'center', gap: 12,
-        padding: '16px 24px', background: '#fff',
-        borderBottom: '1px solid #d9d9d9',
-      }}>
+      <div className="app-header-bar">
         <Button type="text" icon={<ArrowLeftOutlined />} onClick={() => navigate('/')} />
-        <span style={{ fontSize: 16, fontWeight: 600 }}>创建智能体 - 基础信息</span>
+        <span style={{ fontSize: 16, fontWeight: 600, color: 'var(--color-text)' }}>创建智能体 - 基础信息</span>
         <Button style={{ marginLeft: 'auto' }} onClick={() => navigate('/')}>取消</Button>
       </div>
 

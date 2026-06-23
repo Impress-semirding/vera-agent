@@ -4,6 +4,7 @@ import { UserOutlined, CameraOutlined } from '@ant-design/icons';
 import type { AgentType, AppMode, AgentFormData } from '@/types/agent';
 import { modelConfigService } from '@/services/modelConfigService';
 import type { ModelOption } from '@/types/modelConfig';
+import { FormCard } from '@/components/ui/FormCard';
 
 interface Props {
   agentType: AgentType;
@@ -41,15 +42,7 @@ export default function BasicInfoForm({ agentType, mode, submitting, onSubmit, o
 
   return (
     <div style={{ maxWidth: 600, margin: '40px auto', padding: 24 }}>
-      <div
-        style={{
-          background: '#fff',
-          border: '1px solid #d9d9d9',
-          borderRadius: 12,
-          padding: 24,
-        }}
-      >
-        <h2 style={{ marginBottom: 24, fontSize: 16 }}>基本信息</h2>
+      <FormCard title="基本信息">
         <Form form={form} layout="vertical" onFinish={handleFinish}>
           <Form.Item label="名称" name="name" rules={[{ required: true, message: '请输入名称' }]}>
             <Input placeholder="请输入智能体名称" />
@@ -69,7 +62,7 @@ export default function BasicInfoForm({ agentType, mode, submitting, onSubmit, o
 
           <Form.Item label="头像">
             <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <Avatar size={64} icon={<UserOutlined />} style={{ background: '#1677ff' }} />
+              <Avatar size={64} icon={<UserOutlined />} style={{ background: 'var(--color-primary)' }} />
               <Upload showUploadList={false} beforeUpload={() => false}>
                 <Button icon={<CameraOutlined />}>更换</Button>
               </Upload>
@@ -89,7 +82,7 @@ export default function BasicInfoForm({ agentType, mode, submitting, onSubmit, o
             </Button>
           </div>
         </Form>
-      </div>
+      </FormCard>
     </div>
   );
 }

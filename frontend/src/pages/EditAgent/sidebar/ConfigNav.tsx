@@ -24,7 +24,6 @@ const NAV_GROUPS = [
   {
     label: '交互设置',
     items: [
-      { key: 'session', icon: 'fa-sliders', label: '会话设置' },
       { key: 'wecom', icon: 'fa-wechat', label: '微信连接' },
     ],
   },

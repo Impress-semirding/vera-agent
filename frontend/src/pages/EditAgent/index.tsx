@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useRef, useState, memo } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import {
-  Button, Tag, Input, Switch, Spin,
-  Modal, Popconfirm, Empty, message,
+  Button, Tag, Input, Spin,
+  Popconfirm, Empty, message,
 } from 'antd';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -15,8 +15,10 @@ import {
   PlusOutlined, SendOutlined, PaperClipOutlined,
   DownloadOutlined, RobotOutlined, UserOutlined,
   TeamOutlined, FileTextOutlined, CodeOutlined,
-  GlobalOutlined, FileOutlined, CloseOutlined, ColumnWidthOutlined, StopOutlined,
+  GlobalOutlined, FileOutlined, FolderOpenOutlined, CloseOutlined, StopOutlined,
   ThunderboltOutlined, LoadingOutlined, CheckCircleOutlined, CloseCircleOutlined,
+  DeleteOutlined, EditOutlined, SyncOutlined, CheckOutlined,
+  MenuFoldOutlined, MenuUnfoldOutlined,
 } from '@ant-design/icons';
 import { useAgentStore } from '@/stores/useAgentStore';
 import { agentService } from '@/services/agentService';
@@ -88,7 +90,6 @@ const PANEL_TITLES: Record<string, string> = {
   base: '基础配置',
   tool: '工具配置（MCP）',
   skill: '技能配置（Skill）',
-  session: '会话设置',
   wecom: '企微连接',
   permission: '用户权限',
 };
@@ -122,28 +123,30 @@ export default function EditAgentPage() {
 
   // Sidebar state
   const [sidebarTab, setSidebarTab] = useState<SidebarTab>('session');
+  const [sidebarCollapsed, setSidebarCollapsed] = useState<boolean>(
+    () => typeof localStorage !== 'undefined' && localStorage.getItem('vera:sidebarCollapsed') === '1',
+  );
+  const toggleSidebar = useCallback(() => {
+    setSidebarCollapsed((c) => {
+      const next = !c;
+      try { localStorage.setItem('vera:sidebarCollapsed', next ? '1' : '0'); } catch { /* ignore */ }
+      return next;
+    });
+  }, []);
 
   // Right panel state
   const [activePanel, setActivePanel] = useState<string | null>(null);
   const [rightView, setRightView] = useState<RightView>('chat');
 
   // Sessions (sidebar) + chat.
-  const creatingSessionRef = useRef(false);
+  const pendingFirstMsgRef = useRef<string | null>(null);
   const [sessions, setSessions] = useState<{ id: string; name: string }[]>([]);
   const [artifactOpen, setArtifactOpen] = useState(false);
-  const [artifactTab, setArtifactTab] = useState<'browser' | 'file'>('browser');
+  const [artifactTab, setArtifactTab] = useState<'browser' | 'file'>('file');
 
   // Config file state (personal agent)
   const [configFileName, setConfigFileName] = useState('CLAUDE.md');
   const [configFileContent, setConfigFileContent] = useState('');
-
-  // Session settings toggles
-  const [sessionSettings, setSessionSettings] = useState({
-    upload: true, effort: true, context: true,
-  });
-
-  // Effect preview modal
-  const [effectPreview, setEffectPreview] = useState<string | null>(null);
 
   // ─── Data loading ────────────────────────────────
   useEffect(() => {
@@ -181,7 +184,6 @@ export default function EditAgentPage() {
   const { messages, streaming, artifacts, send, stop, clear } = useChatSocket(
     agentId,
     sessionId,
-    handleSessionCreated,
     handleSessionRenamed,
   );
 
@@ -201,16 +203,29 @@ export default function EditAgentPage() {
   const handleSend = useCallback((text: string) => {
     if (!text.trim()) return;
     if (!sessionId) {
-      if (creatingSessionRef.current) return;
-      creatingSessionRef.current = true;
-      sessionService.create(agentId!).then(res => {
-        creatingSessionRef.current = false;
+      // First message with no session yet: create a session, switch the route,
+      // and queue the text. The actual send happens in the effect below, ONLY
+      // once sessionId is available — never before the route has settled, and
+      // exactly once.
+      if (pendingFirstMsgRef.current) return;  // already queued
+      pendingFirstMsgRef.current = text;
+      sessionService.create(agentId!).then((res) => {
         if (res.data?.id) handleSessionCreated(res.data.id);
-      }).catch(() => { creatingSessionRef.current = false; message.error('创建会话失败'); });
+        else pendingFirstMsgRef.current = null;
+      }).catch(() => { pendingFirstMsgRef.current = null; message.error('创建会话失败'); });
       return;
     }
     void send(text);
   }, [agentId, sessionId, send, handleSessionCreated]);
+
+  // Flush the very first message once the freshly-created session is active.
+  useEffect(() => {
+    if (sessionId && pendingFirstMsgRef.current) {
+      const text = pendingFirstMsgRef.current;
+      pendingFirstMsgRef.current = null;
+      void send(text);
+    }
+  }, [sessionId, send]);
 
   if (agentLoading) {
     return (
@@ -288,47 +303,63 @@ export default function EditAgentPage() {
   return (
     <div className={s.editPage}>
       {/* ═══ Left Sidebar ═══ */}
-      <div className={s.sidebar} data-type={agent.type}>
-        {/* Header */}
-        <div className={s.sidebarHeader}>
-          <Button type="text" size="small" icon={<ArrowLeftOutlined />} onClick={() => navigate('/')} />
-          <span className={s.sidebarTitle}>{agent.name}</span>
-          <Tag color={isSystem ? 'blue' : 'purple'} style={{ fontSize: 10, lineHeight: '16px', margin: 0, flexShrink: 0 }}>
-            {isSystem ? 'Claude code' : ''}
-          </Tag>
-        </div>
-
-        {/* Tabs */}
-        <div className={s.sidebarTabs}>
-          <div className={`${s.sidebarTab} ${sidebarTab === 'session' ? s.active : ''}`} onClick={() => { setSidebarTab('session'); setRightView('chat'); }}>
-            <MessageOutlined /> 会话
-          </div>
-          {canEdit && (
-            <div className={`${s.sidebarTab} ${sidebarTab === 'config' ? s.active : ''}`} onClick={() => setSidebarTab('config')}>
-              {isSystem ? <><SettingOutlined /> 配置</> : <><FileTextOutlined /> 配置</>}
+      <div className={s.sidebar} data-type={agent.type} data-collapsed={sidebarCollapsed ? 'true' : 'false'}>
+        {sidebarCollapsed ? (
+          <>
+            {/* Collapsed rail: back button + expand toggle only */}
+            <div className={s.sidebarHeader}>
+              <Button type="text" size="small" icon={<ArrowLeftOutlined />} onClick={() => navigate('/')} title="返回" />
             </div>
-          )}
-        </div>
+            <div style={{ flex: 1 }} />
+            <div className={s.sidebarFooter}>
+              <Button type="text" size="small" block icon={<MenuUnfoldOutlined />} onClick={toggleSidebar} title="展开侧栏" />
+            </div>
+          </>
+        ) : (
+          <>
+            {/* Header */}
+            <div className={s.sidebarHeader}>
+              <Button type="text" size="small" icon={<ArrowLeftOutlined />} onClick={() => navigate('/')} />
+              <span className={s.sidebarTitle}>{agent.name}</span>
+              <Tag color={isSystem ? 'blue' : 'purple'} style={{ fontSize: 10, lineHeight: '16px', margin: 0, flexShrink: 0 }}>
+                {isSystem ? 'Claude code' : ''}
+              </Tag>
+            </div>
 
-        {/* Session view */}
-        {sidebarTab === 'session' && (
-          <SessionList sessions={sidebarSessions} onNew={handleNewSession} onSelect={handleSessionSelect} onDelete={handleDeleteSession} onRename={handleRenameSession} />
+            {/* Tabs */}
+            <div className={s.sidebarTabs}>
+              <div className={`${s.sidebarTab} ${sidebarTab === 'session' ? s.active : ''}`} onClick={() => { setSidebarTab('session'); setRightView('chat'); }}>
+                <MessageOutlined /> 会话
+              </div>
+              {canEdit && (
+                <div className={`${s.sidebarTab} ${sidebarTab === 'config' ? s.active : ''}`} onClick={() => setSidebarTab('config')}>
+                  {isSystem ? <><SettingOutlined /> 配置</> : <><FileTextOutlined /> 配置</>}
+                </div>
+              )}
+            </div>
+
+            {/* Session view */}
+            {sidebarTab === 'session' && (
+              <SessionList sessions={sidebarSessions} onNew={handleNewSession} onSelect={handleSessionSelect} onDelete={handleDeleteSession} onRename={handleRenameSession} />
+            )}
+
+            {/* Config view */}
+            {sidebarTab === 'config' && isSystem && (
+              <ConfigNav activePanel={activePanel || ''} onPanelChange={handlePanelChange} />
+            )}
+
+            {/* Personal config: file tree */}
+            {sidebarTab === 'config' && !isSystem && (
+              <PersonalFileTree onFileSelect={handleFileSelect} />
+            )}
+
+            {/* Footer */}
+            <div className={s.sidebarFooter}>
+              <Button type="text" size="small" icon={<AppstoreOutlined />} onClick={() => navigate('/')} style={{ flex: 1, justifyContent: 'flex-start' }}>所有智能体</Button>
+              <Button type="text" size="small" icon={<MenuFoldOutlined />} onClick={toggleSidebar} title="收起侧栏" />
+            </div>
+          </>
         )}
-
-        {/* Config view */}
-        {sidebarTab === 'config' && isSystem && (
-          <ConfigNav activePanel={activePanel || ''} onPanelChange={handlePanelChange} />
-        )}
-
-        {/* Personal config: file tree */}
-        {sidebarTab === 'config' && !isSystem && (
-          <PersonalFileTree onFileSelect={handleFileSelect} />
-        )}
-
-        {/* Footer */}
-        <div className={s.sidebarFooter}>
-          <Button type="text" size="small" block icon={<AppstoreOutlined />} onClick={() => navigate('/')}>所有智能体</Button>
-        </div>
       </div>
 
       {/* ═══ Right Content ═══ */}
@@ -364,7 +395,7 @@ export default function EditAgentPage() {
         {rightView === 'configPanel' && activePanel && (
           <>
             {/* Panel Title Bar */}
-            <div style={{ background: '#fff', borderBottom: '1px solid #f0f0f0', padding: '12px 24px', flexShrink: 0 }}>
+            <div style={{ background: '#fff', borderBottom: '1px solid var(--color-border-light)', padding: '12px 24px', flexShrink: 0 }}>
               <span style={{ fontWeight: 500, fontSize: 14 }}>{PANEL_TITLES[activePanel] || activePanel}</span>
             </div>
             {/* Panel Body */}
@@ -374,9 +405,6 @@ export default function EditAgentPage() {
               {activePanel === 'tool' && <ToolConfigPanel agentId={agentId} />}
               {activePanel === 'schedule' && agent && <SchedulePanel agentId={agentId} />}
               {activePanel === 'skill' && <SkillConfigPanel agentId={agentId} />}
-              {activePanel === 'session' && (
-                <SessionSettingsPanel settings={sessionSettings} onChange={setSessionSettings} onPreview={setEffectPreview} />
-              )}
               {activePanel === 'wecom' && agent && <WeComPanel agent={agent} agentId={agentId!} />}
               {activePanel === 'permission' && <PermissionPanel agentId={agentId!} />}
             </div>
@@ -384,45 +412,6 @@ export default function EditAgentPage() {
         )}
       </div>
 
-      {/* Effect Preview Modal */}
-      <Modal open={!!effectPreview} onCancel={() => setEffectPreview(null)} footer={null} title="效果预览" width={500}>
-        {effectPreview === 'upload' && (
-          <div style={{ padding: 24, border: '1px dashed #d9d9d9', borderRadius: 8, textAlign: 'center' }}>
-            <div style={{ marginBottom: 16, color: '#00000073', fontSize: 13 }}>附件上传区域</div>
-            <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
-              <Tag color="blue">📄 report.pdf</Tag>
-              <Button size="small">添加附件</Button>
-            </div>
-            <div style={{ marginTop: 12, fontSize: 12, color: '#00000040' }}>支持 PDF、Word、Excel、图片、文本文件，单文件最大 20MB</div>
-          </div>
-        )}
-        {effectPreview === 'effort' && (
-          <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr 1fr', gap: 16 }}>
-            {[
-              { level: 1, label: '简单', desc: '快速响应，低消耗' },
-              { level: 2, label: '标准', desc: '平衡质量与速度', active: true },
-              { level: 3, label: '困难', desc: '深度思考，高准确度' },
-            ].map((e) => (
-              <div key={e.level} style={{
-                padding: 16, borderRadius: 8, textAlign: 'center',
-                border: e.active ? '2px solid #1677ff' : '1px solid #d9d9d9',
-                background: e.active ? '#e6f4ff' : '#fff',
-              }}>
-                <div style={{ fontSize: 24, fontWeight: 700, color: e.active ? '#1677ff' : '#00000040' }}>{e.level}</div>
-                <div style={{ fontWeight: 600, fontSize: 14, marginTop: 4 }}>{e.label}</div>
-                <div style={{ fontSize: 12, color: '#00000073', marginTop: 4 }}>{e.desc}</div>
-              </div>
-            ))}
-          </div>
-        )}
-        {effectPreview === 'context' && (
-          <div style={{ textAlign: 'center', padding: 24 }}>
-            <Button danger style={{ marginRight: 16 }}>清除历史消息</Button>
-            <Button type="primary">重置上下文</Button>
-            <div style={{ marginTop: 12, fontSize: 12, color: '#ff4d4f' }}>⚠️ 此操作不可撤销</div>
-          </div>
-        )}
-      </Modal>
     </div>
   );
 }
@@ -492,16 +481,13 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
       {hasSession ? (
         <>
           {/* Header */}
-          <div style={{ background: '#fff', borderBottom: '1px solid #f0f0f0', padding: '12px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
-            <span style={{ fontSize: 13, color: '#00000073' }}>
+          <div style={{ background: '#fff', borderBottom: '1px solid var(--color-border-light)', padding: '12px 24px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+            <span style={{ fontSize: 13, color: 'var(--color-text-tertiary)' }}>
               <MessageOutlined /> {sessionName}
-              {streaming ? <span style={{ marginLeft: 8, color: '#1677ff' }}>· 正在思考…</span> : null}
+              {streaming ? <span style={{ marginLeft: 8, color: 'var(--color-primary)' }}>· 正在思考…</span> : null}
             </span>
             <div style={{ display: 'flex', gap: 8 }}>
-              <Popconfirm title="清空所有对话？" onConfirm={onClear}>
-                <Button size="small">清空对话</Button>
-              </Popconfirm>
-              <Button size="small" icon={<ColumnWidthOutlined />} onClick={onToggleArtifact} />
+              <Button size="small" icon={<FolderOpenOutlined />} onClick={onToggleArtifact} title="生成文件 / 产物" />
             </div>
           </div>
           <div style={{ display: 'flex', flex: 1, overflow: 'hidden' }}>
@@ -516,13 +502,13 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
                     <div key={msg.id} style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start', marginBottom: 16 }}>
                       <div style={isUser
                         ? { maxWidth: '70%', display: 'flex', flexDirection: 'column', gap: 2 }
-                        : { width: '70%', minWidth: 320, display: 'flex', flexDirection: 'column', gap: hasSegments ? 8 : 2, flexShrink: 0 }
+                        : { width: '70%', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: hasSegments ? 8 : 2 }
                       }>
                         {timeLabel ? (
-                          <div style={{ fontSize: 13, color: '#00000073', textAlign: isUser ? 'right' : 'left', padding: '0 4px' }} title={timeTitle}>
+                          <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)', textAlign: isUser ? 'right' : 'left', padding: '0 4px' }} title={timeTitle}>
                             {timeLabel}
                             {!isUser && msg.durationMs != null ? (
-                              <span style={{ marginLeft: 8, color: '#00000040' }}>
+                              <span style={{ marginLeft: 8, color: 'var(--color-text-quaternary)' }}>
                                 执行耗时: {msg.durationMs >= 1000
                                   ? `${(msg.durationMs / 1000).toFixed(1)}s`
                                   : `${msg.durationMs}ms`}
@@ -534,7 +520,7 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
                           /* User message: simple bubble */
                           <div style={{
                             padding: '10px 16px', borderRadius: 12, fontSize: 14, lineHeight: 1.6,
-                            background: '#1677ff', color: '#fff', whiteSpace: 'pre-wrap',
+                            background: 'var(--color-primary)', color: '#fff', whiteSpace: 'pre-wrap',
                           }}>
                             {msg.content}
                           </div>
@@ -545,14 +531,14 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
                           /* Assistant fallback (no segments / old messages) */
                           <>
                             {msg.reasoning ? (
-                              <div style={{ fontSize: 12, color: '#00000073', background: '#fafafa', border: '1px solid #f0f0f0', borderRadius: 8, padding: '8px 12px', whiteSpace: 'pre-wrap' }}>
-                                <div style={{ fontWeight: 500, marginBottom: 4 }}>🧠 思考过程</div>
+                              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', background: 'var(--color-bg-subtle)', border: '1px solid var(--color-border-light)', borderRadius: 8, padding: '8px 12px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                                <div style={{ fontWeight: 500, marginBottom: 4 }}><ThunderboltOutlined /> 思考过程</div>
                                 {msg.reasoning}
                               </div>
                             ) : null}
                             <div className={s.markdownBody} style={{
                               padding: '6px 16px', borderRadius: 12, fontSize: 14, lineHeight: 1.6,
-                              background: '#f5f5f5', color: '#000000e0',
+                              background: 'var(--color-bg-muted)', color: 'var(--color-text)',
                             }}>
                               <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: CodeBlock, p: 'div' }}>{msg.content}</ReactMarkdown>
                               {msg.pending ? <TypingDots /> : null}
@@ -587,17 +573,17 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
         </>
       ) : (
         /* Empty state */
-        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, padding: '32px 24px' }}>
-          <div style={{ width: 40, height: 40, borderRadius: '50%', background: agentType === 'system' ? '#e6f4ff' : '#f3e8ff', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16 }}>
-            {agentType === 'system' ? <RobotOutlined style={{ color: '#1677ff' }} /> : <UserOutlined style={{ color: '#722ed1' }} />}
+        <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', flex: 1, padding: '40px 24px' }}>
+          <div style={{ width: 56, height: 56, borderRadius: '50%', background: agentType === 'system' ? 'linear-gradient(135deg, #3b82f6, var(--color-primary))' : '#f3e8ff', display: 'flex', alignItems: 'center', justifyContent: 'center', marginBottom: 16, boxShadow: agentType === 'system' ? '0 8px 24px rgba(22,119,255,0.18)' : 'none' }}>
+            {agentType === 'system' ? <RobotOutlined style={{ color: '#fff', fontSize: 26 }} /> : <UserOutlined style={{ color: 'var(--color-thinking)', fontSize: 26 }} />}
           </div>
-          <p style={{ fontSize: 14, color: '#00000073', marginBottom: 4 }}>{agentName}</p>
-          <p style={{ fontSize: 12, color: '#00000040', marginBottom: 24 }}>
-            <span style={{ fontWeight: 500, color: '#000000a6' }}>{agentName}</span> · {agentType === 'system' ? 'Claude Code' : ''}
+          <h3 style={{ fontSize: 18, fontWeight: 600, color: 'var(--color-text)', margin: 0, marginBottom: 6 }}>{agentName}</h3>
+          <p style={{ fontSize: 13, color: 'var(--color-text-tertiary)', marginBottom: 32 }}>
+            {agentType === 'system' ? 'Claude Code 智能体 · 输入消息开始对话' : '输入消息开始对话'}
           </p>
-          <div style={{ width: '100%', maxWidth: 640 }}>
+          <div style={{ width: '100%', maxWidth: 720 }}>
             <ChatInputArea onSend={onSend} onStop={onStop} streaming={streaming} large />
-            <p style={{ fontSize: 12, textAlign: 'center', color: '#00000040', marginTop: 8 }}>Enter 发送 · Shift+Enter 换行</p>
+            <p style={{ fontSize: 12, textAlign: 'center', color: 'var(--color-text-quaternary)', marginTop: 12 }}>Enter 发送 · Shift+Enter 换行</p>
           </div>
         </div>
       )}
@@ -703,7 +689,7 @@ const ChatInputArea = memo(function ChatInputArea({ onSend, onStop, streaming, l
   };
 
   return (
-    <div style={{ flexShrink: 0, background: '#fff', borderTop: '1px solid #f0f0f0', padding: large ? 0 : '16px 24px' }}>
+    <div style={{ flexShrink: 0, background: '#fff', borderTop: large ? 'none' : '1px solid var(--color-border-light)', padding: large ? 0 : '16px 24px' }}>
       <div style={{ maxWidth: large ? '100%' : 1152, margin: large ? undefined : '0 auto' }}>
         {/* Uploaded file chips */}
         {uploadedFiles.length > 0 && (
@@ -715,7 +701,7 @@ const ChatInputArea = memo(function ChatInputArea({ onSend, onStop, streaming, l
             ))}
           </div>
         )}
-        <div style={{ border: '1px solid #d9d9d9', borderRadius: 12, transition: 'all 0.2s' }}>
+        <div style={{ border: '1px solid var(--color-border)', borderRadius: 12, transition: 'all 0.2s' }}>
           <Input.TextArea
             ref={inputRef}
             value={value}
@@ -730,7 +716,7 @@ const ChatInputArea = memo(function ChatInputArea({ onSend, onStop, streaming, l
             onPaste={handlePaste}
           />
           <div style={{ display: 'flex', justifyContent: 'space-between', padding: '4px 16px 10px' }}>
-            <div style={{ display: 'flex', gap: 12, color: '#00000040', fontSize: 14, alignItems: 'center' }}>
+            <div style={{ display: 'flex', gap: 12, color: 'var(--color-text-quaternary)', fontSize: 14, alignItems: 'center' }}>
               <input
                 type="file"
                 multiple
@@ -745,8 +731,8 @@ const ChatInputArea = memo(function ChatInputArea({ onSend, onStop, streaming, l
               {uploading && <span style={{ fontSize: 12 }}>上传中...</span>}
               {sessionId && onResetContext ? (
                 <Popconfirm title="清空上下文将重置工作区的 CLAUDE.md 和 skills，不删除聊天记录" onConfirm={onResetContext}>
-                  <Button size="small" type="text" style={{ fontSize: 12, color: '#00000073', padding: '0 4px' }}>
-                    🗑 清空上下文
+                  <Button size="small" type="text" style={{ fontSize: 12, color: 'var(--color-text-tertiary)', padding: '0 4px' }}>
+                    <DeleteOutlined /> 清空上下文
                   </Button>
                 </Popconfirm>
               ) : null}
@@ -811,7 +797,7 @@ function ArtifactSidebar({ tab, artifacts, onTabChange, onClose }: {
         onMouseDown={onMouseDown}
         onMouseEnter={(e) => {
           (e.currentTarget as HTMLElement).style.width = '5px';
-          (e.currentTarget as HTMLElement).style.background = '#d9d9d9';
+          (e.currentTarget as HTMLElement).style.background = 'var(--color-border)';
         }}
         onMouseLeave={(e) => {
           (e.currentTarget as HTMLElement).style.width = '4px';
@@ -822,33 +808,33 @@ function ArtifactSidebar({ tab, artifacts, onTabChange, onClose }: {
           background: 'transparent', zIndex: 10, transition: 'width 0.1s, background 0.1s',
         }}
       />
-      <div style={{ flex: 1, borderLeft: '1px solid #f0f0f0', display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
-      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid #f0f0f0', flexShrink: 0 }}>
-        <div style={{ display: 'flex', gap: 4 }}>
-          <Button size="small" type={tab === 'browser' ? 'primary' : 'text'} icon={<GlobalOutlined />} onClick={() => onTabChange('browser')}>浏览器</Button>
-          <Button size="small" type={tab === 'file' ? 'primary' : 'text'} icon={<FileOutlined />} onClick={() => onTabChange('file')}>文件</Button>
-        </div>
+      <div style={{ flex: 1, borderLeft: '1px solid var(--color-border-light)', display: 'flex', flexDirection: 'column', background: '#fff', overflow: 'hidden' }}>
+      <div style={{ display: 'flex', alignItems: 'center', flexFlow: "row-reverse",justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--color-border-light)', flexShrink: 0 }}>
+        {/* <div style={{ display: 'flex', gap: 4 }}> */}
+          {/* <Button size="small" type={tab === 'browser' ? 'primary' : 'text'} icon={<GlobalOutlined />} onClick={() => onTabChange('browser')}>浏览器</Button> */}
+          {/* <Button size="small" type={tab === 'file' ? 'primary' : 'text'} icon={<FileOutlined />} onClick={() => onTabChange('file')}>文件</Button> */}
+        {/* </div> */}
         <Button type="text" size="small" icon={<CloseOutlined />} onClick={onClose} />
       </div>
       {tab === 'browser' && (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', gap: 8, padding: '8px 12px', borderBottom: '1px solid #f0f0f0', background: '#fafafa' }}>
+          <div style={{ display: 'flex', gap: 8, padding: '8px 12px', borderBottom: '1px solid var(--color-border-light)', background: 'var(--color-bg-subtle)' }}>
             <Input size="small" placeholder="输入URL" style={{ flex: 1 }} />
             <Button size="small" type="primary">跳转</Button>
           </div>
-          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#00000040', fontSize: 13 }}>
+          <div style={{ flex: 1, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-quaternary)', fontSize: 13 }}>
             浏览器预览区域
           </div>
         </div>
       )}
       {tab === 'file' && (
         <div style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
-          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid #f0f0f0' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', padding: '10px 16px', borderBottom: '1px solid var(--color-border-light)' }}>
             <span style={{ fontWeight: 500, fontSize: 14 }}>生成文件 · {files.length}</span>
           </div>
           <div style={{ flex: 1, overflow: 'auto' }}>
             {files.length === 0 ? (
-              <div style={{ padding: 32, textAlign: 'center', color: '#00000040', fontSize: 13 }}>暂无生成文件</div>
+              <div style={{ padding: 32, textAlign: 'center', color: 'var(--color-text-quaternary)', fontSize: 13 }}>暂无生成文件</div>
             ) : (
               files.map((f, i) => (
                 <FileRow key={i} name={f.name} path={f.path} size={f.size} downloadUrl={downloadUrl(f.path)} />
@@ -868,15 +854,15 @@ function ConfigFileEditorPanel({ fileName, content, onContentChange }: {
 }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', flex: 1, overflow: 'hidden' }}>
-      <div style={{ background: '#fff', borderBottom: '1px solid #f0f0f0', padding: '12px 24px', display: 'flex', justifyContent: 'space-between', flexShrink: 0 }}>
+      <div style={{ background: '#fff', borderBottom: '1px solid var(--color-border-light)', padding: '12px 24px', display: 'flex', justifyContent: 'space-between', flexShrink: 0 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 14 }}>
-          <CodeOutlined style={{ color: '#1677ff' }} />
+          <CodeOutlined style={{ color: 'var(--color-primary)' }} />
           <span style={{ fontWeight: 500 }}>{fileName}</span>
-          <span style={{ color: '#00000040', fontSize: 12 }}>.claude/</span>
+          <span style={{ color: 'var(--color-text-quaternary)', fontSize: 12 }}>.claude/</span>
         </div>
-        <span style={{ fontSize: 12, color: '#52c41a' }}>● 已保存</span>
+        <span style={{ fontSize: 12, color: 'var(--color-success)' }}>● 已保存</span>
       </div>
-      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', padding: 24, background: '#fafafa' }}>
+      <div style={{ flex: 1, overflow: 'hidden', display: 'flex', flexDirection: 'column', padding: 24, background: 'var(--color-bg-subtle)' }}>
         <Input.TextArea
           value={content}
           onChange={(e) => onContentChange(e.target.value)}
@@ -891,23 +877,23 @@ function ConfigFileEditorPanel({ fileName, content, onContentChange }: {
 // ─── Personal File Tree ──────────────────────────
 function PersonalFileTree({ onFileSelect }: { onFileSelect: (name: string, content: string) => void }) {
   const files = [
-    { name: 'CLAUDE.md', icon: <FileTextOutlined style={{ color: '#1677ff' }} />, content: '# CLAUDE.md\n你是一个专业的业务智能助手...' },
-    { name: 'settings.json', icon: <CodeOutlined style={{ color: '#52c41a' }} />, content: '{\n  "preset": "auto",\n  "editMode": "auto"\n}' },
-    { name: 'commands/weekly-report.md', icon: <FileTextOutlined style={{ color: '#faad14' }} />, content: '# weekly-report skill\n生成每周VOC周报' },
-    { name: 'hooks/post-push.sh', icon: <CodeOutlined style={{ color: '#722ed1' }} />, content: '#!/bin/bash\necho "post-push hook"' },
-    { name: 'memory/user.md', icon: <FileOutlined style={{ color: '#00000073' }} />, content: '# User preferences\n- 输出中文' },
+    { name: 'CLAUDE.md', icon: <FileTextOutlined style={{ color: 'var(--color-primary)' }} />, content: '# CLAUDE.md\n你是一个专业的业务智能助手...' },
+    { name: 'settings.json', icon: <CodeOutlined style={{ color: 'var(--color-success)' }} />, content: '{\n  "preset": "auto",\n  "editMode": "auto"\n}' },
+    { name: 'commands/weekly-report.md', icon: <FileTextOutlined style={{ color: 'var(--color-warning)' }} />, content: '# weekly-report skill\n生成每周VOC周报' },
+    { name: 'hooks/post-push.sh', icon: <CodeOutlined style={{ color: 'var(--color-thinking)' }} />, content: '#!/bin/bash\necho "post-push hook"' },
+    { name: 'memory/user.md', icon: <FileOutlined style={{ color: 'var(--color-text-tertiary)' }} />, content: '# User preferences\n- 输出中文' },
   ];
   return (
     <div className={s.sidebarBody} style={{ padding: '4px 8px' }}>
-      <div style={{ fontSize: 11, color: '#00000040', padding: '4px', fontWeight: 500, marginBottom: 4 }}>文件夹</div>
-      <div style={{ fontSize: 11, color: '#00000073', padding: '4px 8px', fontWeight: 500, fontFamily: 'monospace' }}>.claude/</div>
+      <div style={{ fontSize: 11, color: 'var(--color-text-quaternary)', padding: '4px', fontWeight: 500, marginBottom: 4 }}>文件夹</div>
+      <div style={{ fontSize: 11, color: 'var(--color-text-tertiary)', padding: '4px 8px', fontWeight: 500, fontFamily: 'monospace' }}>.claude/</div>
       {files.map((f) => (
         <div
           key={f.name}
-          style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px 6px 24px', borderRadius: 6, cursor: 'pointer', fontSize: 13, color: '#000000a6', transition: 'all 0.15s' }}
+          style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '6px 12px 6px 24px', borderRadius: 6, cursor: 'pointer', fontSize: 13, color: 'var(--color-text-secondary)', transition: 'all 0.15s' }}
           onClick={() => onFileSelect(f.name, f.content)}
-          onMouseEnter={(e) => { e.currentTarget.style.background = '#e6f4ff'; e.currentTarget.style.color = '#1677ff'; }}
-          onMouseLeave={(e) => { e.currentTarget.style.background = ''; e.currentTarget.style.color = '#000000a6'; }}
+          onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--color-primary-soft)'; e.currentTarget.style.color = 'var(--color-primary)'; }}
+          onMouseLeave={(e) => { e.currentTarget.style.background = ''; e.currentTarget.style.color = 'var(--color-text-secondary)'; }}
         >
           {f.icon} <span>{f.name}</span>
         </div>
@@ -916,38 +902,6 @@ function PersonalFileTree({ onFileSelect }: { onFileSelect: (name: string, conte
         <Button type="dashed" size="small" block icon={<PlusOutlined />}>新建文件</Button>
       </div>
     </div>
-  );
-}
-
-// ─── Panel: Session Settings ─────────────────────
-function SessionSettingsPanel({ settings, onChange, onPreview }: {
-  settings: { upload: boolean; effort: boolean; context: boolean };
-  onChange: (s: { upload: boolean; effort: boolean; context: boolean }) => void;
-  onPreview: (type: string) => void;
-}) {
-  const items = [
-    { key: 'upload' as const, label: '上传附件', desc: '允许用户在会话中上传附件' },
-    { key: 'effort' as const, label: 'Effort自定义', desc: '允许用户自定义处理复杂度等级' },
-    { key: 'context' as const, label: '手动清除上下文', desc: '允许用户手动清除会话历史和上下文' },
-  ];
-  return (
-    <FormCard>
-      <h4 style={{ fontWeight: 600, marginBottom: 24 }}>会话设置</h4>
-      <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
-        {items.map((item) => (
-          <div key={item.key} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 16, border: '1px solid #d9d9d9', borderRadius: 8 }}>
-            <div>
-              <div style={{ fontWeight: 500, fontSize: 14 }}>{item.label}</div>
-              <p style={{ fontSize: 12, color: '#00000073', marginTop: 4 }}>{item.desc}</p>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-              <Button type="link" size="small" onClick={() => onPreview(item.key)}>【效果】</Button>
-              <Switch checked={settings[item.key]} onChange={(v) => onChange({ ...settings, [item.key]: v })} />
-            </div>
-          </div>
-        ))}
-      </div>
-    </FormCard>
   );
 }
 
@@ -1043,11 +997,11 @@ function WeChatPanel({ agent, agentId }: { agent: Agent; agentId: string }) {
 
   // ─── Render ──────────────────────────────────
   const statusLabel: Record<string, { text: string; color: string }> = {
-    disconnected: { text: '未连接', color: '#00000040' },
-    pending: { text: '等待扫码', color: '#faad14' },
-    scanned: { text: '已扫码，请确认', color: '#1677ff' },
-    confirmed: { text: '已连接', color: '#52c41a' },
-    expired: { text: '二维码已过期', color: '#ff4d4f' },
+    disconnected: { text: '未连接', color: 'var(--color-text-quaternary)' },
+    pending: { text: '等待扫码', color: 'var(--color-warning)' },
+    scanned: { text: '已扫码，请确认', color: 'var(--color-primary)' },
+    confirmed: { text: '已连接', color: 'var(--color-success)' },
+    expired: { text: '二维码已过期', color: 'var(--color-danger)' },
   };
   const s = statusLabel[loginStatus] ?? statusLabel.disconnected;
 
@@ -1056,13 +1010,13 @@ function WeChatPanel({ agent, agentId }: { agent: Agent; agentId: string }) {
       <h4 style={{ fontWeight: 600, marginBottom: 24 }}>微信绑定</h4>
 
       {/* Toggle */}
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 16, border: '1px solid #d9d9d9', borderRadius: 8, marginBottom: 16 }}>
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', padding: 16, border: '1px solid var(--color-border)', borderRadius: 8, marginBottom: 16 }}>
         <div>
           <div style={{ fontWeight: 500 }}>
             微信连接
-            <Tag color={s.color === '#52c41a' ? 'success' : s.color === '#ff4d4f' ? 'error' : s.color === '#faad14' ? 'warning' : 'default'} style={{ marginLeft: 8 }}>{s.text}</Tag>
+            <Tag color={s.color === 'var(--color-success)' ? 'success' : s.color === 'var(--color-danger)' ? 'error' : s.color === 'var(--color-warning)' ? 'warning' : 'default'} style={{ marginLeft: 8 }}>{s.text}</Tag>
           </div>
-          <p style={{ fontSize: 12, color: '#00000073', marginTop: 4 }}>
+          <p style={{ fontSize: 12, color: 'var(--color-text-tertiary)', marginTop: 4 }}>
             {loginStatus === 'confirmed'
               ? `已绑定: ${ilinkUserId || '(未知用户)'}`
               : '扫码即可在微信中使用 Vera Agent'}
@@ -1079,16 +1033,16 @@ function WeChatPanel({ agent, agentId }: { agent: Agent; agentId: string }) {
 
       {/* QR Code */}
       {(loginStatus === 'pending' || loginStatus === 'scanned') && qrcodeImg && (
-        <div style={{ textAlign: 'center', padding: 24, border: '1px solid #d9d9d9', borderRadius: 8, marginBottom: 16 }}>
+        <div style={{ textAlign: 'center', padding: 24, border: '1px solid var(--color-border)', borderRadius: 8, marginBottom: 16 }}>
           <img
             src={`data:image/png;base64,${qrcodeImg}`}
             alt="微信扫码"
             style={{ width: 200, height: 200, imageRendering: 'pixelated' }}
           />
-          <p style={{ marginTop: 12, fontSize: 14, color: '#1677ff', fontWeight: 500 }}>
-            {loginStatus === 'scanned' ? '✓ 已扫码，请在手机上确认登录' : '请使用微信扫描二维码'}
+          <p style={{ marginTop: 12, fontSize: 14, color: 'var(--color-primary)', fontWeight: 500 }}>
+            {loginStatus === 'scanned' ? <><CheckOutlined /> 已扫码，请在手机上确认登录</> : '请使用微信扫描二维码'}
           </p>
-          <p style={{ fontSize: 12, color: '#00000073' }}>
+          <p style={{ fontSize: 12, color: 'var(--color-text-tertiary)' }}>
             二维码有效期为 5 分钟
           </p>
         </div>
@@ -1096,8 +1050,8 @@ function WeChatPanel({ agent, agentId }: { agent: Agent; agentId: string }) {
 
       {/* Expired */}
       {loginStatus === 'expired' && (
-        <div style={{ textAlign: 'center', padding: 24, border: '1px solid #d9d9d9', borderRadius: 8, marginBottom: 16 }}>
-          <p style={{ color: '#ff4d4f', fontWeight: 500 }}>二维码已过期</p>
+        <div style={{ textAlign: 'center', padding: 24, border: '1px solid var(--color-border)', borderRadius: 8, marginBottom: 16 }}>
+          <p style={{ color: 'var(--color-danger)', fontWeight: 500 }}>二维码已过期</p>
           <Button type="primary" loading={loading} onClick={startLogin} style={{ marginTop: 8 }}>
             重新获取二维码
           </Button>
@@ -1106,11 +1060,11 @@ function WeChatPanel({ agent, agentId }: { agent: Agent; agentId: string }) {
 
       {/* Connected info */}
       {loginStatus === 'confirmed' && (
-        <div style={{ fontSize: 12, color: '#00000073', lineHeight: 1.8, padding: '0 4px' }}>
-          <p>✅ Vera 已连接到微信</p>
-          <p>💬 在微信中给绑定的 Bot 发消息即可使用</p>
-          <p>🔄 每用户自动创建独立会话，上下文保持</p>
-          <p>📎 支持文本消息（图片/语音暂不支持）</p>
+        <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', lineHeight: 1.8, padding: '0 4px' }}>
+          <p><CheckCircleOutlined style={{ color: 'var(--color-success)' }} /> Vera 已连接到微信</p>
+          <p><MessageOutlined /> 在微信中给绑定的 Bot 发消息即可使用</p>
+          <p><SyncOutlined /> 每用户自动创建独立会话，上下文保持</p>
+          <p><PaperClipOutlined /> 支持文本消息（图片/语音暂不支持）</p>
         </div>
       )}
     </FormCard>
@@ -1123,7 +1077,7 @@ const WeComPanel = WeChatPanel;
 // ═══ Utility Components ══════════════════════════
 
 function FormCard({ children }: { children: React.ReactNode }) {
-  return <div style={{ background: '#fff', border: '1px solid #d9d9d9', borderRadius: 8, padding: 20, marginBottom: 16 }}>{children}</div>;
+  return <div style={{ background: '#fff', border: '1px solid var(--color-border)', borderRadius: 8, padding: 20, marginBottom: 16 }}>{children}</div>;
 }
 
 // ─── Typing indicator ──────────────────────────────
@@ -1133,7 +1087,7 @@ function TypingDots() {
     <span style={{ display: 'inline-flex', gap: 3, alignItems: 'center', marginLeft: 4 }}>
       {[0, 1, 2].map((i) => (
         <span key={i} style={{
-          width: 6, height: 6, borderRadius: '50%', background: '#00000040',
+          width: 6, height: 6, borderRadius: '50%', background: 'var(--color-text-quaternary)',
           animation: `typingBounce 1.4s ${i * 0.2}s infinite ease-in-out`,
         }} />
       ))}
@@ -1155,23 +1109,23 @@ function FileRow({ name, size, downloadUrl }: { name: string; path: string; size
       onMouseLeave={() => setHover(false)}
       style={{
         display: 'flex', alignItems: 'center', gap: 8,
-        padding: '8px 16px', borderBottom: '1px solid #f0f0f0',
+        padding: '8px 16px', borderBottom: '1px solid var(--color-border-light)',
         fontSize: 12, color: 'inherit', textDecoration: 'none',
-        background: hover ? '#f5f5f5' : undefined,
+        background: hover ? 'var(--color-bg-muted)' : undefined,
       }}
     >
-      <FileTextOutlined style={{ color: '#1677ff', flexShrink: 0 }} />
+      <FileTextOutlined style={{ color: 'var(--color-primary)', flexShrink: 0 }} />
       <span style={{ flex: 1, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={name}>
         {name}
       </span>
       <span style={{
-        color: '#00000040', flexShrink: 0, fontSize: 11,
+        color: 'var(--color-text-quaternary)', flexShrink: 0, fontSize: 11,
         opacity: hover ? 0 : 1, transition: 'opacity 0.15s',
       }}>
         {size > 1024 ? `${(size / 1024).toFixed(1)} KB` : `${size} B`}
       </span>
       <DownloadOutlined style={{
-        color: '#1677ff', flexShrink: 0, fontSize: 14,
+        color: 'var(--color-primary)', flexShrink: 0, fontSize: 14,
         opacity: hover ? 1 : 0, transition: 'opacity 0.15s',
       }} />
     </a>
@@ -1229,8 +1183,8 @@ function ThinkingBlock({ items, pending }: { items: Segment[]; pending?: boolean
   return (
     <div style={{
       width: '100%',
-      fontSize: 12, color: '#6b5ce7', background: '#f8f6ff',
-      border: '1px solid #e8e0ff', borderRadius: 8, overflow: 'hidden',
+      fontSize: 12, color: 'var(--color-thinking)', background: 'var(--color-thinking-bg)',
+      border: '1px solid var(--color-thinking-border)', borderRadius: 8, overflow: 'hidden',
     }}>
       <div
         onClick={() => setCollapsed(!collapsed)}
@@ -1243,10 +1197,10 @@ function ThinkingBlock({ items, pending }: { items: Segment[]; pending?: boolean
         思考过程
         {pending && !hasContent ? <LoadingOutlined style={{ fontSize: 10 }} /> : null}
         {toolParts.length > 0 ? (
-          <span style={{ fontSize: 11, color: '#6b5ce780', fontWeight: 400 }}>· {toolParts.length} 次工具调用</span>
+          <span style={{ fontSize: 11, color: 'rgba(107,92,231,0.5)', fontWeight: 400 }}>· {toolParts.length} 次工具调用</span>
         ) : null}
         {hasContent ? (
-          <span style={{ marginLeft: 'auto', fontSize: 10, color: '#6b5ce780' }}>{collapsed ? '展开' : '收起'}</span>
+          <span style={{ marginLeft: 'auto', fontSize: 10, color: 'rgba(107,92,231,0.5)' }}>{collapsed ? '展开' : '收起'}</span>
         ) : null}
       </div>
 
@@ -1279,11 +1233,11 @@ function ReasoningStep({ text, pending, source }: { text: string; isLast?: boole
   const [collapsed, setCollapsed] = useState(true);
   if (!text && !pending) return null;
   const isThinking = source === 'reasoning' || !source;
-  const label = isThinking ? '🧠 推理' : '📝 回复草稿';
-  const bg = isThinking ? '#f8f6ff' : '#fffbe6';
-  const border = isThinking ? '#d9d9ff' : '#ffe58f';
-  const topBg = isThinking ? '#f8f6ff' : '#fffbe6';
-  const color = isThinking ? '#6b5ce7' : '#ad8b00';
+  const label = isThinking ? <><ThunderboltOutlined /> 推理</> : <><EditOutlined /> 回复草稿</>;
+  const bg = isThinking ? 'var(--color-thinking-bg)' : '#fffbe6';
+  const border = isThinking ? 'var(--color-thinking-border)' : '#ffe58f';
+  const topBg = isThinking ? 'var(--color-thinking-bg)' : '#fffbe6';
+  const color = isThinking ? 'var(--color-thinking)' : '#ad8b00';
   return (
     <div style={{
       margin: '6px 8px',
@@ -1308,11 +1262,10 @@ function ReasoningStep({ text, pending, source }: { text: string; isLast?: boole
       </div>
       {!collapsed && text ? (
         <div style={{
-          padding: '8px 10px', whiteSpace: 'pre-wrap', lineHeight: 1.6,
-          color: '#000000d9', borderTop: `1px solid ${border}`,
+          padding: '8px 10px', whiteSpace: 'pre-wrap', lineHeight: 1.6, overflowWrap: 'anywhere',
+          color: 'var(--color-text)', borderTop: `1px solid ${border}`,
         }}>
           {text}
-null
         </div>
       ) : null}
     </div>
@@ -1324,25 +1277,25 @@ function ToolCard({ segment }: { segment: Extract<Segment, { kind: 'tool' }> }) 
   const { name, args, output, ok, done } = segment;
   const [collapsed, setCollapsed] = useState(true);
   const headerIcon = done
-    ? (ok ? <CheckCircleOutlined style={{ color: '#52c41a' }} /> : <CloseCircleOutlined style={{ color: '#ff4d4f' }} />)
-    : <LoadingOutlined style={{ color: '#1677ff' }} />;
+    ? (ok ? <CheckCircleOutlined style={{ color: 'var(--color-success)' }} /> : <CloseCircleOutlined style={{ color: 'var(--color-danger)' }} />)
+    : <LoadingOutlined style={{ color: 'var(--color-primary)' }} />;
 
   const hasBody = !!(args || output);
   return (
-    <div style={{ width: '100%', background: '#fff', border: '1px solid #e8e8e8', borderRadius: 6, fontSize: 12, overflow: 'hidden' }}>
+    <div style={{ width: '100%', background: '#fff', border: '1px solid var(--color-border)', borderRadius: 6, fontSize: 12, overflow: 'hidden' }}>
       <div onClick={() => hasBody && setCollapsed(!collapsed)} style={{
         display: 'flex', alignItems: 'center', gap: 6,
-        padding: '6px 10px', background: '#fafafa',
+        padding: '6px 10px', background: 'var(--color-bg-subtle)',
         cursor: hasBody ? 'pointer' : 'default', userSelect: 'none',
-        borderBottom: !collapsed && hasBody ? '1px solid #f0f0f0' : 'none',
+        borderBottom: !collapsed && hasBody ? '1px solid var(--color-border-light)' : 'none',
       }}>
         {headerIcon}
-        <code style={{ fontWeight: 600, fontSize: 12, color: '#000000d9' }}>{name || 'tool'}</code>
-        {!done && <span style={{ color: '#1677ff', fontSize: 11 }}>执行中…</span>}
-        {done && ok && <span style={{ color: '#52c41a', fontSize: 11 }}>完成</span>}
-        {done && !ok && <span style={{ color: '#ff4d4f', fontSize: 11 }}>失败</span>}
+        <code style={{ fontWeight: 600, fontSize: 12, color: 'var(--color-text)' }}>{name || 'tool'}</code>
+        {!done && <span style={{ color: 'var(--color-primary)', fontSize: 11 }}>执行中…</span>}
+        {done && ok && <span style={{ color: 'var(--color-success)', fontSize: 11 }}>完成</span>}
+        {done && !ok && <span style={{ color: 'var(--color-danger)', fontSize: 11 }}>失败</span>}
         {hasBody ? (
-          <span style={{ marginLeft: 'auto', fontSize: 10, color: '#00000040' }}>
+          <span style={{ marginLeft: 'auto', fontSize: 10, color: 'var(--color-text-quaternary)' }}>
             {collapsed ? '展开' : '收起'}
           </span>
         ) : null}
@@ -1353,10 +1306,10 @@ function ToolCard({ segment }: { segment: Extract<Segment, { kind: 'tool' }> }) 
           {args ? (
             <pre style={{
               margin: 0, padding: '6px 10px', fontSize: 11, lineHeight: 1.5,
-              background: '#f5f5f5', color: '#000000a6',
+              background: 'var(--color-bg-muted)', color: 'var(--color-text-secondary)',
               whiteSpace: 'pre-wrap', wordBreak: 'break-all',
               fontFamily: "'SFMono-Regular', Consolas, monospace",
-              borderBottom: output ? '1px solid #f0f0f0' : 'none',
+              borderBottom: output ? '1px solid var(--color-border-light)' : 'none',
             }}>
               {args}
             </pre>
@@ -1364,8 +1317,8 @@ function ToolCard({ segment }: { segment: Extract<Segment, { kind: 'tool' }> }) 
           {output ? (
             <pre style={{
               margin: 0, padding: '6px 10px', fontSize: 11, lineHeight: 1.5,
-              background: done && !ok ? '#fff2f0' : '#f5f5f5',
-              color: done && !ok ? '#cf1322' : '#000000a6',
+              background: done && !ok ? '#fff2f0' : 'var(--color-bg-muted)',
+              color: done && !ok ? '#cf1322' : 'var(--color-text-secondary)',
               whiteSpace: 'pre-wrap', wordBreak: 'break-all',
               fontFamily: "'SFMono-Regular', Consolas, monospace",
               maxHeight: 200, overflowY: 'auto',
@@ -1384,7 +1337,7 @@ function TextSegment({ text }: { text: string; pending?: boolean }) {
   return (
     <div className={s.markdownBody} style={{
       padding: '6px 16px', borderRadius: 12, fontSize: 14, lineHeight: 1.6,
-      background: '#f5f5f5', color: '#000000e0',
+      background: 'var(--color-bg-muted)', color: 'var(--color-text)',
     }}>
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: CodeBlock, p: 'div' }}>{text}</ReactMarkdown>
     </div>
@@ -1412,7 +1365,7 @@ function CodeBlock({ className, children }: any) {
     try {
       const option = JSON.parse(code);
       return (
-        <div style={{ margin: '8px 0', border: '1px solid #e8e8e8', borderRadius: 8, overflow: 'hidden' }}>
+        <div style={{ margin: '8px 0', border: '1px solid var(--color-border)', borderRadius: 8, overflow: 'hidden' }}>
           <ReactECharts option={option} style={{ height: 320 }} />
         </div>
       );
@@ -1427,7 +1380,7 @@ function CodeBlock({ className, children }: any) {
 
   return (
     <pre style={preStyle}>
-      {lang ? <span style={{ color: '#00000040', fontSize: 11 }}>{lang}</span> : null}
+      {lang ? <span style={{ color: 'var(--color-text-quaternary)', fontSize: 11 }}>{lang}</span> : null}
       <code>{code}</code>
     </pre>
   );
@@ -1435,7 +1388,7 @@ function CodeBlock({ className, children }: any) {
 
 const preStyle: React.CSSProperties = {
   margin: '8px 0', padding: '8px 12px', fontSize: 12, lineHeight: 1.5,
-  background: '#fafafa', borderRadius: 6, overflow: 'auto',
+  background: 'var(--color-bg-subtle)', borderRadius: 6, overflow: 'auto',
   fontFamily: "'SFMono-Regular', Consolas, monospace",
   whiteSpace: 'pre-wrap', wordBreak: 'break-all',
 };

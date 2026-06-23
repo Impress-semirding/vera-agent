@@ -47,16 +47,16 @@ export default function AdminUsersPage() {
   };
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f5f5f5' }}>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 12, padding: '16px 24px', background: '#fff', borderBottom: '1px solid #d9d9d9' }}>
+    <div className="app-page">
+      <div className="app-header-bar">
         <Button icon={<ArrowLeftOutlined />} onClick={() => navigate('/')}>返回</Button>
-        <span style={{ fontSize: 18, fontWeight: 600 }}>用户并发管理</span>
-        <span style={{ color: '#00000073', fontSize: 13, marginLeft: 'auto' }}>
+        <span style={{ fontSize: 18, fontWeight: 600, color: 'var(--color-text)' }}>用户并发管理</span>
+        <span style={{ color: 'var(--color-text-tertiary)', fontSize: 13, marginLeft: 'auto' }}>
           环境默认值：{defaultMax}（用户未设置时使用）
         </span>
       </div>
 
-      <div style={{ padding: 24 }}>
+      <div style={{ padding: 'var(--space-6)' }}>
         <Table<AdminUser>
           rowKey="id"
           loading={loading}
@@ -94,7 +94,7 @@ export default function AdminUsersPage() {
                 }
                 return (
                   <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
-                    <span>{u.maxConcurrentTurns ?? <span style={{ color: '#00000040' }}>默认 ({defaultMax})</span>}</span>
+                    <span>{u.maxConcurrentTurns ?? <span style={{ color: 'var(--color-text-quaternary)' }}>默认 ({defaultMax})</span>}</span>
                     <Button size="small" type="link" onClick={() => { setEditing(u.id); setDraft(u.maxConcurrentTurns); }}>修改</Button>
                   </div>
                 );

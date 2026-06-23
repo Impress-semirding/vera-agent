@@ -77,21 +77,21 @@ export default function LoginPage() {
   };
 
   return (
-    <div style={{ minHeight: '100vh', background: '#f5f5f5', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
-      <div style={{ width: 360, background: '#fff', border: '1px solid #d9d9d9', borderRadius: 12, padding: 32, boxShadow: '0 2px 8px rgba(0,0,0,0.04)' }}>
+    <div style={{ minHeight: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center', background: 'radial-gradient(circle at 30% 20%, #e8f1ff 0%, var(--color-bg) 50%)' }}>
+      <div style={{ width: 380, background: 'var(--glass-bg)', backdropFilter: 'blur(var(--glass-blur))', WebkitBackdropFilter: 'blur(var(--glass-blur))', border: '1px solid var(--color-border-light)', borderRadius: 'var(--radius-xl)', padding: 'var(--space-8)', boxShadow: 'var(--shadow-lg), inset 0 1px 0 var(--glass-border-highlight)' }}>
         {/* Brand */}
         <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 8, marginBottom: 8 }}>
-          <StarOutlined style={{ color: '#1677ff', fontSize: 22 }} />
-          <span style={{ fontSize: 20, fontWeight: 600 }}>Vera</span>
+          <StarOutlined style={{ color: 'var(--color-primary)', fontSize: 22 }} />
+          <span style={{ fontSize: 20, fontWeight: 600, color: 'var(--color-text)' }}>Vera</span>
         </div>
-        <p style={{ textAlign: 'center', color: '#00000073', fontSize: 13, marginBottom: 24 }}>登录以管理你的智能体</p>
+        <p style={{ textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: 13, marginBottom: 24 }}>登录以管理你的智能体</p>
 
         {error ? <Alert type="error" message={error} showIcon style={{ marginBottom: 16 }} /> : null}
 
         {totpPending.identifier ? (
           /* TOTP second-factor */
           <>
-            <p style={{ textAlign: 'center', color: '#00000073', fontSize: 13, marginBottom: 12 }}>
+            <p style={{ textAlign: 'center', color: 'var(--color-text-tertiary)', fontSize: 13, marginBottom: 12 }}>
               已通过密码验证，请输入 Google Authenticator 中的 6 位验证码
             </p>
             <div style={{ display: 'flex', gap: 8, marginBottom: 16 }}>
@@ -123,8 +123,8 @@ export default function LoginPage() {
           <Button type="primary" htmlType="submit" block loading={submitting}>登录</Button>
           {dingtalkEnabled && (
             <>
-              <Divider style={{ margin: '16px 0', fontSize: 12, color: '#00000040' }}>或</Divider>
-              <Button block size="large" onClick={handleDingtalk} style={{ color: '#1677ff', borderColor: '#1677ff' }}>
+              <Divider style={{ margin: '16px 0', fontSize: 12, color: 'var(--color-text-quaternary)' }}>或</Divider>
+              <Button block size="large" onClick={handleDingtalk} style={{ color: 'var(--color-primary)', borderColor: 'var(--color-primary)' }}>
                 钉钉登录
               </Button>
             </>

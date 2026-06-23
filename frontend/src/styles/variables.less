@@ -1,15 +1,63 @@
-@primary: #1677ff;
-@secondary: #4096ff;
-@light-bg: #f5f5f5;
-@border-light: #d9d9d9;
-@text-primary: #000000e0;
-@text-secondary: #00000073;
-@white: #ffffff;
-@danger: #ff4d4f;
-@success: #52c41f;
-@warning: #faad14;
+// Less-level aliases over the CSS custom properties defined in global.less.
+// This lets existing .less modules consume the same single source of truth.
+// Keep the underlying values in sync with src/styles/tokens.ts.
 
-@border-radius: 8px;
-@border-radius-lg: 12px;
-@shadow-sm: 0 1px 2px 0 rgba(0, 0, 0, 0.03), 0 1px 6px -1px rgba(0, 0, 0, 0.02), 0 2px 4px 0 rgba(0, 0, 0, 0.02);
-@shadow-md: 0 6px 16px 0 rgba(0, 0, 0, 0.08), 0 3px 6px -4px rgba(0, 0, 0, 0.12), 0 9px 28px 8px rgba(0, 0, 0, 0.05);
+// ── Colors ─────────────────────────────────────────
+@primary: var(--color-primary);
+@primary-hover: var(--color-primary-hover);
+@primary-soft: var(--color-primary-soft);
+@secondary: var(--color-primary-hover);
+
+@text-primary: var(--color-text);
+@text-secondary: var(--color-text-secondary);
+@text-tertiary: var(--color-text-tertiary);
+@text-quaternary: var(--color-text-quaternary);
+
+@light-bg: var(--color-bg);
+@white: var(--color-bg-container);
+@bg-subtle: var(--color-bg-subtle);
+@bg-muted: var(--color-bg-muted);
+
+@border-light: var(--color-border);
+@border-lighter: var(--color-border-light);
+
+@danger: var(--color-danger);
+@success: var(--color-success);
+@warning: var(--color-warning);
+@info: var(--color-info);
+
+@thinking: var(--color-thinking);
+@thinking-bg: var(--color-thinking-bg);
+@thinking-border: var(--color-thinking-border);
+
+// ── Radius ─────────────────────────────────────────
+@border-radius-sm: var(--radius-sm);
+@border-radius: var(--radius-md);
+@border-radius-lg: var(--radius-lg);
+@border-radius-xl: var(--radius-xl);
+
+// ── Spacing ────────────────────────────────────────
+@space-1: var(--space-1);
+@space-2: var(--space-2);
+@space-3: var(--space-3);
+@space-4: var(--space-4);
+@space-5: var(--space-5);
+@space-6: var(--space-6);
+@space-8: var(--space-8);
+@space-10: var(--space-10);
+@space-12: var(--space-12);
+
+// ── Shadows ────────────────────────────────────────
+@shadow-xs: var(--shadow-xs);
+@shadow-sm: var(--shadow-sm);
+@shadow-md: var(--shadow-md);
+@shadow-lg: var(--shadow-lg);
+@shadow-glow: var(--shadow-glow);
+
+// ── Glass ──────────────────────────────────────────
+@glass-bg: var(--glass-bg);
+@glass-blur: var(--glass-blur);
+
+// ── Motion ─────────────────────────────────────────
+@motion-base: var(--motion-base);
+@motion-ease: var(--motion-ease);

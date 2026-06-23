@@ -1,4 +1,80 @@
-@import './variables.less';
+/* ─────────────────────────────────────────────────────────────
+ * Vera design tokens — keep in sync with src/styles/tokens.ts
+ * ───────────────────────────────────────────────────────────── */
+:root {
+  // Brand / primary
+  --color-primary: #1677ff;
+  --color-primary-hover: #4096ff;
+  --color-primary-active: #0958d9;
+  --color-primary-soft: #e8f1ff;
+
+  // Text scale (≥4.5:1 on white)
+  --color-text: #1f2937;
+  --color-text-secondary: #4b5563;
+  --color-text-tertiary: #6b7280;
+  --color-text-quaternary: #9ca3af;
+
+  // Backgrounds
+  --color-bg: #f5f7fa;
+  --color-bg-container: #ffffff;
+  --color-bg-subtle: #f9fafb;
+  --color-bg-muted: #f3f4f6;
+
+  // Borders
+  --color-border: #e5e7eb;
+  --color-border-light: #eef0f3;
+
+  // Status
+  --color-success: #16a34a;
+  --color-warning: #f59e0b;
+  --color-danger: #ef4444;
+  --color-info: #1677ff;
+
+  // Thinking blocks
+  --color-thinking: #6b5ce7;
+  --color-thinking-bg: #f5f3ff;
+  --color-thinking-border: #e8e0ff;
+
+  // Spacing (4px base)
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 20px;
+  --space-6: 24px;
+  --space-8: 32px;
+  --space-10: 40px;
+  --space-12: 48px;
+
+  // Radius
+  --radius-sm: 6px;
+  --radius-md: 8px;
+  --radius-lg: 12px;
+  --radius-xl: 16px;
+  --radius-pill: 999px;
+
+  // Shadows
+  --shadow-xs: 0 1px 2px 0 rgba(16, 24, 40, 0.04);
+  --shadow-sm: 0 1px 3px 0 rgba(16, 24, 40, 0.06), 0 1px 2px -1px rgba(16, 24, 40, 0.04);
+  --shadow-md: 0 4px 12px 0 rgba(16, 24, 40, 0.06), 0 2px 4px -1px rgba(16, 24, 40, 0.04);
+  --shadow-lg: 0 12px 24px 0 rgba(16, 24, 40, 0.08), 0 4px 8px -2px rgba(16, 24, 40, 0.04);
+  --shadow-glow: 0 4px 14px 0 rgba(22, 119, 255, 0.32);
+  --shadow-glow-hover: 0 6px 20px 0 rgba(22, 119, 255, 0.42);
+
+  // Glass
+  --glass-bg: rgba(255, 255, 255, 0.72);
+  --glass-border-highlight: rgba(255, 255, 255, 0.6);
+  --glass-blur: 12px;
+
+  // Motion
+  --motion-fast: 150ms;
+  --motion-base: 200ms;
+  --motion-slow: 300ms;
+  --motion-ease: cubic-bezier(0.4, 0, 0.2, 1);
+
+  --font-family: system-ui, -apple-system, 'Segoe UI', 'PingFang SC', 'Microsoft YaHei', Roboto,
+    'Helvetica Neue', Arial, sans-serif;
+}
 
 * {
   margin: 0;
@@ -7,27 +83,190 @@
 }
 
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
-  color: @text-primary;
-  background: @light-bg;
+  font-family: var(--font-family);
+  color: var(--color-text);
+  background: var(--color-bg);
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
 }
 
+#root {
+  min-height: 100vh;
+}
+
+/* ── Scrollbar ───────────────────────────────────── */
 ::-webkit-scrollbar {
-  width: 6px;
-  height: 6px;
+  width: 8px;
+  height: 8px;
 }
 
 ::-webkit-scrollbar-thumb {
-  background: #c1c1c1;
-  border-radius: 3px;
+  background: var(--color-border);
+  border-radius: var(--radius-pill);
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-text-quaternary);
+  background-clip: content-box;
 }
 
 ::-webkit-scrollbar-track {
   background: transparent;
 }
 
-#root {
+/* ─────────────────────────────────────────────────────────────
+ * Layout utility classes — shared across all pages
+ * ───────────────────────────────────────────────────────────── */
+
+/* Full-page wrapper with the app background. */
+.app-page {
   min-height: 100vh;
+  background: var(--color-bg);
+}
+
+/* Sticky glass top bar — replaces the duplicated header pattern. */
+.app-header-bar {
+  position: sticky;
+  top: 0;
+  z-index: 20;
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-6);
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border-bottom: 1px solid var(--color-border-light);
+}
+
+/* Surface card used for forms / content blocks. */
+.app-card {
+  background: var(--color-bg-container);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6);
+  box-shadow: var(--shadow-xs);
+}
+
+/* Section: title row with optional right-aligned action. */
+.app-section {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-6);
+}
+.app-section-title {
+  font-size: 15px;
+  font-weight: 600;
+  color: var(--color-text);
+}
+
+.muted {
+  color: var(--color-text-tertiary);
+}
+.help-text {
+  font-size: 12px;
+  color: var(--color-text-tertiary);
+}
+
+.glass {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+}
+
+/* Card hover lift used by list cards. */
+.card-hover {
+  transition: box-shadow var(--motion-base) var(--motion-ease),
+    border-color var(--motion-base) var(--motion-ease), transform var(--motion-base) var(--motion-ease);
+}
+.card-hover:hover {
+  box-shadow: var(--shadow-md);
+  border-color: var(--color-primary-soft);
+  transform: translateY(-2px);
+}
+
+/* ─────────────────────────────────────────────────────────────
+ * Ant Design — glass / tech button layer
+ * (applies app-wide to every <Button>, no per-file changes)
+ * ───────────────────────────────────────────────────────────── */
+.ant-btn {
+  transition: all var(--motion-base) var(--motion-ease);
+}
+
+/* Primary: tech-blue gradient + top glass highlight + glow shadow */
+.ant-btn-primary:not(.ant-btn-disabled):not(:disabled) {
+  background: linear-gradient(135deg, #3b82f6 0%, #1677ff 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.25), var(--shadow-glow);
+  border-color: transparent;
+}
+.ant-btn-primary:not(.ant-btn-disabled):not(:disabled):hover {
+  background: linear-gradient(135deg, #4d90ff 0%, #1d6fff 100%);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.3), var(--shadow-glow-hover);
+  transform: translateY(-1px);
+}
+.ant-btn-primary:not(.ant-btn-disabled):not(:disabled):active {
+  transform: translateY(0);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.2), var(--shadow-glow);
+}
+
+/* Default: frosted glass + hairline border (only when enabled) */
+.ant-btn-default:not(.ant-btn-disabled):not(:disabled),
+.ant-btn:not(.ant-btn-primary):not(.ant-btn-dashed):not(.ant-btn-link):not(.ant-btn-text):not(.ant-btn-dangerous):not(.ant-btn-disabled):not(:disabled) {
+  background: var(--glass-bg);
+  backdrop-filter: blur(var(--glass-blur));
+  -webkit-backdrop-filter: blur(var(--glass-blur));
+  border-color: var(--color-border);
+  box-shadow: var(--shadow-xs);
+}
+.ant-btn-default:not(.ant-btn-disabled):not(:disabled):hover,
+.ant-btn:not(.ant-btn-primary):not(.ant-btn-dashed):not(.ant-btn-link):not(.ant-btn-text):not(.ant-btn-dangerous):not(.ant-btn-disabled):not(:disabled):hover {
+  background: var(--color-primary-soft);
+  border-color: var(--color-primary);
+  color: var(--color-primary);
+}
+
+/* Disabled: clear muted, non-interactive look (no glass, no glow) */
+.ant-btn.ant-btn-disabled,
+.ant-btn:disabled {
+  cursor: not-allowed;
+  background: var(--color-bg-muted) !important;
+  border-color: var(--color-border-light) !important;
+  color: var(--color-text-quaternary) !important;
+  box-shadow: none !important;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+  transform: none !important;
+}
+
+/* Danger button keeps a restrained tinted look */
+.ant-btn-dangerous:not(.ant-btn-primary):not(.ant-btn-disabled):not(:disabled) {
+  background: #fff1f0;
+  border-color: var(--color-danger);
+  color: var(--color-danger);
+}
+.ant-btn-dangerous:not(.ant-btn-primary):not(.ant-btn-disabled):not(:disabled):hover {
+  background: var(--color-danger);
+  color: #fff;
+}
+
+/* Cards: rounded + soft shadow */
+.ant-card {
+  border-radius: var(--radius-lg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+  }
+  .ant-btn-primary:not(:disabled):hover,
+  .card-hover:hover {
+    transform: none;
+  }
 }

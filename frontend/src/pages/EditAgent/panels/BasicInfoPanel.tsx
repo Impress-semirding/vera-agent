@@ -92,11 +92,12 @@ export default function BasicInfoPanel({ agentId, agent }: { agentId: string; ag
           </FormRow>
 
           {agent.type === 'system' && (
-            <FormRow label="全员可见">
+            <div style={{ display: 'flex', alignItems: 'center', gap: 'var(--space-4)' }}>
+              <span style={{ width: 80, flexShrink: 0, fontSize: 14, color: 'var(--color-text-secondary)' }}>全员可见</span>
               <Form.Item name="visibility" noStyle valuePropName="checked">
                 <Switch />
               </Form.Item>
-            </FormRow>
+            </div>
           )}
         </div>
 

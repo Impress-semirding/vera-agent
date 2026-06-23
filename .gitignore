@@ -38,3 +38,4 @@ mcp_jwt_public.pem
 .vscode/
 *.log
 dist.zip
+.claude

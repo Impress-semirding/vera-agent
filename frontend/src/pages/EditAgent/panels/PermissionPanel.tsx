@@ -4,6 +4,7 @@ import { PlusOutlined, DeleteOutlined, EditOutlined } from '@ant-design/icons';
 import permissionService from '@/services/permissionService';
 import type { AgentPermission, PermissionFormData, PermissionLevel } from '@/types/agent';
 import api from '@/services/api';
+import { FormCard } from '@/components/ui/FormCard';
 
 const PERMISSION_OPTIONS: { value: PermissionLevel; label: string; color: string }[] = [
   { value: 'view', label: '查看', color: 'blue' },
@@ -159,14 +160,14 @@ export default function PermissionPanel({ agentId }: Props) {
     {
       title: '操作',
       key: 'actions',
-      width: 140,
+      width: 200,
       render: (_: any, record: AgentPermission) => (
         <>
           <Button type="link" size="small" icon={<EditOutlined />} onClick={() => openEdit(record)}>
             编辑
           </Button>
           <Popconfirm title="确认移除该用户的权限？" onConfirm={() => handleDelete(record.id)}>
-            <Button type="link" size="small" danger icon={<DeleteOutlined />}>
+            <Button type="link" size="small" danger icon={<DeleteOutlined />} style={{ marginLeft: 8 }}>
               删除
             </Button>
           </Popconfirm>
@@ -176,13 +177,16 @@ export default function PermissionPanel({ agentId }: Props) {
   ];
 
   return (
-    <div style={{ background: '#fff', border: '1px solid #d9d9d9', borderRadius: 8, padding: 20 }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 16 }}>
-        <h4 style={{ fontWeight: 600, margin: 0 }}>用户权限管理</h4>
-        <Button type="primary" size="small" icon={<PlusOutlined />} onClick={openAdd}>
-          添加用户
-        </Button>
-      </div>
+    <FormCard
+      title={
+        <>
+          <h4 style={{ fontSize: 15, fontWeight: 600, margin: 0, color: 'var(--color-text)' }}>用户权限管理</h4>
+          <Button type="primary" size="small" icon={<PlusOutlined />} onClick={openAdd}>
+            添加用户
+          </Button>
+        </>
+      }
+    >
 
       <Table
         columns={columns}
@@ -240,6 +244,6 @@ export default function PermissionPanel({ agentId }: Props) {
           </Form.Item>
         </Form>
       </Modal>
-    </div>
+    </FormCard>
   );
 }

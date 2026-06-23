@@ -80,11 +80,11 @@ export default function AgentListHeader() {
 
   return (
     <>
-      <div style={{ display: 'flex', alignItems: 'center', gap: 16, padding: '16px 24px', background: '#fff', borderBottom: '1px solid #d9d9d9' }}>
+      <div className="app-header-bar">
         {/* Logo */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 18, fontWeight: 600, marginRight: 16 }}>
-          <StarOutlined style={{ color: '#1677ff' }} />
-          <span>Vera</span>
+          <StarOutlined style={{ color: 'var(--color-primary)' }} />
+          <span style={{ color: 'var(--color-text)' }}>Vera</span>
         </div>
 
         {/* Mode Switcher */}
@@ -118,8 +118,8 @@ export default function AgentListHeader() {
         {/* Current user + logout */}
         {user ? (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-            <Avatar size="small" icon={<UserOutlined />} style={{ background: '#1677ff' }} />
-            <span style={{ fontSize: 13, color: '#000000a6' }}>{user.name}</span>
+            <Avatar size="small" icon={<UserOutlined />} style={{ background: 'var(--color-primary)' }} />
+            <span style={{ fontSize: 13, color: 'var(--color-text-secondary)' }}>{user.name}</span>
             {user.isPasswordUser && (
               <Button type="text" size="small" icon={<SafetyOutlined />} onClick={handleTotpSetup} title="二次验证" />
             )}
@@ -141,9 +141,9 @@ export default function AgentListHeader() {
       >
         {totpSetup && totpQR ? (
           <div style={{ textAlign: 'center' }}>
-            <p style={{ fontSize: 13, color: '#00000073', marginBottom: 12 }}>使用 Google Authenticator 扫描二维码</p>
+            <p style={{ fontSize: 13, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>使用 Google Authenticator 扫描二维码</p>
             <img src={`data:image/png;base64,${totpQR}`} alt="TOTP QR" style={{ width: 180, height: 180 }} />
-            <p style={{ fontSize: 13, color: '#00000073', margin: '12px 0' }}>扫码后输入 6 位验证码确认</p>
+            <p style={{ fontSize: 13, color: 'var(--color-text-tertiary)', margin: '12px 0' }}>扫码后输入 6 位验证码确认</p>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'center' }}>
               <Input
                 maxLength={6}
@@ -158,7 +158,7 @@ export default function AgentListHeader() {
           </div>
         ) : (
           <div style={{ textAlign: 'center' }}>
-            <p style={{ fontSize: 13, color: '#00000073', marginBottom: 12 }}>关闭前需验证身份，请输入当前验证码</p>
+            <p style={{ fontSize: 13, color: 'var(--color-text-tertiary)', marginBottom: 12 }}>关闭前需验证身份，请输入当前验证码</p>
             <div style={{ display: 'flex', gap: 8, justifyContent: 'center', marginBottom: 12 }}>
               <Input
                 maxLength={6}

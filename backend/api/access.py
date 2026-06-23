@@ -1,12 +1,13 @@
 """Access control: who can use an agent.
 
 Rule (single source of truth, shared by the agents + chat routers):
-  a user can access an agent if they CREATED it, OR they have a ``Permission``
-  row on it whose ``agent_permissions`` contains ``"view"``. ``visibility`` is
-  only a display flag — it no longer grants access to everyone.
+  a user can access (view) an agent if they CREATED it, they have a
+  ``Permission`` row on it whose ``agent_permissions`` contains ``"view"``,
+  OR it is a public system agent (``type == 'system'`` and ``visibility`` True)
+  — public agents are visible to everyone.
 
-  Edit/delete require the corresponding permission level. The owner always has
-  full permissions.
+  Edit/delete require the corresponding permission level (public visibility
+  does NOT grant edit/delete). The owner always has full permissions.
 """
 
 from __future__ import annotations
@@ -49,6 +50,9 @@ async def _get_user_perm_list(
 async def can_access_agent(db: AsyncSession, agent: M.Agent, user_name: str) -> bool:
     if not user_name:
         return False
+    # Public system agents (visibility=True) are viewable by everyone.
+    if agent.visibility and agent.type == "system":
+        return True
     if agent.created_by == user_name:
         return True
     perms = await _get_user_perm_list(db, agent.id, user_name)

@@ -70,13 +70,17 @@ async def list_agents(
     user: str = Depends(current_user),
 ):
     stmt = select(M.Agent)
-    # Baseline access: only agents the current user may see (owner / permitted).
+    # Baseline access: public system agents (visibility=True) are visible to
+    # everyone; otherwise only agents the current user created or has 'view'
+    # permission on.
+    public = (M.Agent.visibility.is_(True)) & (M.Agent.type == "system")
     permitted = select(M.Permission.agent_id).where(
         M.Permission.user_name == user,
         M.Permission.agent_permissions.like('%"view"%'),
     )
     stmt = stmt.where(
         or_(
+            public,
             M.Agent.created_by == user,
             M.Agent.id.in_(permitted),
         )
