@@ -1,1 +1,1 @@
-"""Reasonix Python HTTP backend — replaces the Node.js desktop sidecar."""
+"""LLM subprocess package — hosts chat.py, spawned by api/llm_client.py."""
