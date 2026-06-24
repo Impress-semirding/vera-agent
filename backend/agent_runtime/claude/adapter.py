@@ -71,3 +71,26 @@ class ClaudeAgentAdapter(AgentAdapter):
             self._pool_client = None
             self._client = None
         await super().close()
+
+    async def release(self) -> None:
+        """Return the container to the pool for reuse by a later turn.
+
+        Unlike ``close()`` this keeps the container alive so the next
+        turn for the same session can reuse it (hitting the in-process
+        SDK session id and avoiding a cold start). The pool marks the
+        slot idle and wakes any waiters.
+        """
+        if self._pool_client is not None:
+            from agent_runtime.claude.container_pool import get_container_pool
+            pool = get_container_pool()
+            try:
+                await pool.release(self._pool_client)
+            except Exception:
+                # release failed — fall back to killing the container so
+                # it doesn't leak as a busy-but-orphaned slot.
+                try:
+                    await self._pool_client.close()
+                except Exception:
+                    pass
+            self._pool_client = None
+            self._client = None

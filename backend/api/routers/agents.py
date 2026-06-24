@@ -213,16 +213,13 @@ async def delete_agent(agent_id: str, db: AsyncSession = Depends(get_db), user: 
     # Cascade-delete everything that belongs to this agent so nothing orphans.
     session_ids = select(M.Session.id).where(M.Session.agent_id == agent_id)
     mcp_ids = select(M.McpServer.id).where(M.McpServer.agent_id == agent_id)
-    wecom_ids = select(M.WeComConfig.id).where(M.WeComConfig.agent_id == agent_id)
 
     await db.execute(delete(M.Message).where(M.Message.session_id.in_(session_ids)))
     await db.execute(delete(M.McpTool).where(M.McpTool.mcp_server_id.in_(mcp_ids)))
-    await db.execute(delete(M.WeComBinding).where(M.WeComBinding.wecom_config_id.in_(wecom_ids)))
 
     children = [
         M.Session, M.Project, M.McpServer, M.Skill, M.Permission,
-        M.PushTask, M.WeComConfig, M.SessionSetting, M.ConfigFile,
-        M.ExecRecord, M.ModifyRecord,
+        M.SessionSetting, M.ConfigFile,
     ]
     for child in children:
         if hasattr(child, "agent_id"):

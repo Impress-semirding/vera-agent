@@ -47,18 +47,15 @@ from api.routers import (
     auth,
     chat,
     config_files,
-    history,
     mcp,
     messages,
     model_configs,
     permissions,
-    push,
     schedules,
     session_settings,
     sessions,
     skills,
     wechat,
-    wecom,
 )
 
 API_PREFIX = "/api/v1"
@@ -132,14 +129,11 @@ for _router in (
     skills.router,
     model_configs.router,
     permissions.router,
-    push.router,
     wechat.router,
-    wecom.router,
     admin.router,
     session_settings.router,
     schedules.router,
     config_files.router,
-    history.router,
 ):
     app.include_router(_router, prefix=API_PREFIX)
 

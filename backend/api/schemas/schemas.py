@@ -272,81 +272,6 @@ class PermissionOut(BaseModel):
     authPermissions: list[str]
 
 
-# ═══════════════════════ Push task ═══════════════════════
-# The frontend PushTask is a flat object. We persist the core scalars in
-# dedicated columns and the rest in a JSON ``config`` blob; the API always
-# returns / accepts the flat shape.
-
-
-class PushTaskCreate(BaseModel):
-    name: str
-    type: str  # wecom-app | webhook-group | longconn-group | longconn-single
-    status: str = "draft"  # active | draft | stopped
-    enabled: bool = False
-    formStyle: str = "msg"  # url | msg
-    config: dict[str, Any] = Field(default_factory=dict)
-
-
-class PushTaskUpdate(BaseModel):
-    name: str | None = None
-    type: str | None = None
-    status: str | None = None
-    enabled: bool | None = None
-    formStyle: str | None = None
-    config: dict[str, Any] | None = None
-
-
-class PushTaskOut(BaseModel):
-    id: str
-    agentId: str
-    name: str
-    type: str
-    status: str
-    enabled: bool
-    formStyle: str
-    # All type-specific fields (webhookUrl, chatId, targetUser, cronExpression,
-    # audit, title, ...) are flattened from the config blob.
-    model_config = {"extra": "allow"}
-
-
-class PushStatusUpdate(BaseModel):
-    status: str
-
-
-# ═══════════════════════ WeCom ═══════════════════════
-
-
-class WeComSave(BaseModel):
-    botId: str
-    botKey: str
-    showThinking: bool = False
-    enabled: bool = True
-
-
-class WeComEnabledUpdate(BaseModel):
-    enabled: bool
-
-
-class WeComBindingCreate(BaseModel):
-    chatId: str
-    description: str | None = None
-
-
-class WeComBindingOut(BaseModel):
-    id: str
-    chatId: str
-    description: str | None
-
-
-class WeComOut(BaseModel):
-    agentId: str
-    enabled: bool
-    botId: str | None
-    botKey: str | None
-    showThinking: bool
-    bindings: list[WeComBindingOut] = []
-
-
 # ═══════════════════════ Session settings ═══════════════════════
 # Field names match fr/src/types/config.ts SessionSettings exactly.
 
@@ -392,29 +317,6 @@ class ConfigFileVersion(BaseModel):
     id: str
     content: str
     author: str
-    timestamp: str
-
-
-# ═══════════════════════ History ═══════════════════════
-
-
-class ExecRecordOut(BaseModel):
-    id: str
-    agentId: str
-    sessionSource: str | None
-    sessionId: str | None
-    userId: str | None
-    status: str
-    content: str | None
-    timestamp: str
-
-
-class ModifyRecordOut(BaseModel):
-    id: str
-    agentId: str
-    operator: str
-    action: str
-    detail: str | None
     timestamp: str
 
 

@@ -24,17 +24,10 @@ from pathlib import Path
 from typing import Callable
 
 from agent_runtime.wechat.ilink_client import (
-    DEFAULT_BASE_URL,
     ERR_SESSION_EXPIRED,
-    MSG_TYPE_USER,
     MSG_TYPE_BOT,
-    MSG_STATE_NEW,
-    ITEM_TYPE_TEXT,
     ILinkClient,
-    ILinkError,
     Credentials,
-    MessageItem,
-    TextItem,
     WeixinMessage,
 )
 

@@ -85,16 +85,7 @@ def verify_session_token(token: str) -> str | None:
         return None
 
 
-def verify_session_token_from_header(authorization: str | None) -> str | None:
-    """Extract and verify a token from an Authorization header."""
-    if authorization and authorization.startswith("Bearer "):
-        return verify_session_token(authorization[7:])
-    return None
-
-
 # ─── Current user ───────────────────────────────────────────────────────────
-
-DEFAULT_USER = "current-user"
 
 
 def current_user(
@@ -125,18 +116,49 @@ def current_user(
 
 
 # ── User token cache (for MCP server env injection) ─────────────────────────
+# Maps user → (token, exp_unix_ts). Entries are lazily expired on read, so the
+# cache can't grow unbounded with stale tokens from long-gone sessions.
 
-_user_tokens: dict[str, str] = {}
+_user_tokens: dict[str, tuple[str, int]] = {}
+
+
+def _extract_exp(token: str) -> int | None:
+    """Parse the expiry timestamp from a signed token (no crypto check here).
+
+    The token format is ``base64("username|exp.sig")``; we only need the exp
+    for cache bookkeeping — callers have already verified the signature.
+    """
+    try:
+        decoded = base64.urlsafe_b64decode(token.encode()).decode()
+        payload, _ = decoded.rsplit(".", 1)
+        _user, exp_str = payload.split("|", 1)
+        return int(exp_str)
+    except Exception:
+        return None
 
 
 def _store_user_token(user: str, token: str) -> None:
     """Cache the most recent token for a user (used by MCP env injection)."""
-    _user_tokens[user] = token
+    exp = _extract_exp(token)
+    if exp is None:
+        return  # can't track expiry — don't cache (caller still has the token)
+    _user_tokens[user] = (token, exp)
 
 
 def get_user_token(user: str) -> str | None:
-    """Return the most recently seen session token for a user, if any."""
-    return _user_tokens.get(user)
+    """Return a non-expired cached token for a user, or None.
+
+    Expired entries are purged on read so the map self-cleans over time.
+    """
+    entry = _user_tokens.get(user)
+    if entry is None:
+        return None
+    token, exp = entry
+    if exp < time.time():
+        # Stale — drop it so the cache doesn't retain dead tokens.
+        _user_tokens.pop(user, None)
+        return None
+    return token
 
 
 # ─── Exception handlers ─────────────────────────────────────────────────────

@@ -81,6 +81,17 @@ class AgentAdapter:
                 pass
             self._client = None
 
+    async def release(self) -> None:
+        """Release resources back to a pool for reuse instead of destroying.
+
+        Default behavior = close (kill the backing client). Backends that
+        manage a pool (e.g. Claude Docker containers) override this to
+        return the client to the pool so a later turn can reuse it and
+        avoid a cold start. Call this after a successful turn; call
+        ``close()`` only when the client is dead or the session is ending.
+        """
+        await self.close()
+
     def is_alive(self) -> bool:
         if self._client is None:
             return False

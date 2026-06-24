@@ -75,22 +75,6 @@ async def me(
     return ok({**_user_out(row), "token": token})
 
 
-@router.get("/auth/userinfo")
-async def userinfo(
-    db: AsyncSession = Depends(get_db),
-    user: str = Depends(current_user),
-):
-    """Return the current user's info (for MCP servers calling back to Vera).
-    Accepts ``Authorization: Bearer`` or ``vera-token`` header.
-    """
-    row = (
-        await db.execute(select(M.User).where(M.User.name == user))
-    ).scalar_one_or_none()
-    if row is None:
-        raise HTTPException(status_code=404, detail="用户不存在")
-    return ok(_user_out(row))
-
-
 # ═══════════════════════════════════════════════════════════════════════
 # TOTP setup (self-service — the authenticated user manages their own 2FA)
 # ═══════════════════════════════════════════════════════════════════════

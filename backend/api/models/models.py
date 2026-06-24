@@ -135,38 +135,6 @@ class User(Base):
 
 
 
-class PushTask(Base):
-    __tablename__ = "push_tasks"
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id"), nullable=False)
-    name: Mapped[str] = mapped_column(String(200), nullable=False)
-    type: Mapped[str] = mapped_column(String(30), nullable=False)
-    status: Mapped[str] = mapped_column(String(20), default="draft")
-    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    form_style: Mapped[str] = mapped_column(String(10), default="msg")
-    config: Mapped[str] = mapped_column(Text, default="{}")  # JSON blob for all type-specific fields
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
-class WeComConfig(Base):
-    __tablename__ = "wecom_configs"
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id"), nullable=False, unique=True)
-    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
-    bot_id: Mapped[str | None] = mapped_column(String(200))
-    bot_key: Mapped[str | None] = mapped_column(String(200))
-    show_thinking: Mapped[bool] = mapped_column(Boolean, default=False)
-
-
-class WeComBinding(Base):
-    __tablename__ = "wecom_bindings"
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    wecom_config_id: Mapped[str] = mapped_column(String(64), ForeignKey("wecom_configs.id"), nullable=False)
-    chat_id: Mapped[str] = mapped_column(String(200), nullable=False)
-    description: Mapped[str | None] = mapped_column(String(500))
-
-
 class SessionSetting(Base):
     __tablename__ = "session_settings"
     id: Mapped[str] = mapped_column(String(64), primary_key=True)
@@ -183,28 +151,6 @@ class ConfigFile(Base):
     path: Mapped[str] = mapped_column(String(500), nullable=False)
     content: Mapped[str] = mapped_column(Text, default="")
     updated_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
-
-
-class ExecRecord(Base):
-    __tablename__ = "exec_records"
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id"), nullable=False)
-    session_source: Mapped[str | None] = mapped_column(String(200))
-    session_id: Mapped[str | None] = mapped_column(String(200))
-    user_id: Mapped[str | None] = mapped_column(String(200))
-    status: Mapped[str] = mapped_column(String(20), default="success")
-    content: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-
-
-class ModifyRecord(Base):
-    __tablename__ = "modify_records"
-    id: Mapped[str] = mapped_column(String(64), primary_key=True)
-    agent_id: Mapped[str] = mapped_column(String(64), ForeignKey("agents.id"), nullable=False)
-    operator: Mapped[str] = mapped_column(String(200), nullable=False)
-    action: Mapped[str] = mapped_column(String(500), nullable=False)
-    detail: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
 
 
 class WeChatiLink(Base):

@@ -300,6 +300,14 @@ async def chat_websocket(ws: WebSocket, agent_id: str) -> None:
                         await w
                     except (asyncio.CancelledError, Exception):
                         pass
+            # Reap per-session locks for the sessions this connection owned.
+            # All workers are now finished, so these locks are idle. Only drop
+            # a lock that is currently unlocked — a lock held by another live
+            # connection (same session reopened elsewhere) stays in the map.
+            for sid in sessions:
+                lock = _session_locks.get(sid)
+                if lock is not None and not lock.locked():
+                    _session_locks.pop(sid, None)
 
     except WebSocketDisconnect:
         return
@@ -335,11 +343,14 @@ async def _session_worker(
     the session lock (serialize within session) then the user semaphore
     (cap concurrent turns across sessions).
 
-    The adapter (Docker container) is created lazily per turn, INSIDE the
-    semaphore slot — so a container only occupies a pool slot when we actually
-    have a turn slot.  If adapter creation fails, the message fails (it's
-    already persisted in the DB) but the worker stays alive so subsequent
-    queued messages still get processed.
+    A fresh adapter is created inside the semaphore slot each turn, then
+    released after the turn so a container only occupies a pool slot while
+    a turn is actually running. Releasing (rather than closing) lets the
+    Claude backend return its container to the pool for reuse by the next
+    turn of the same session, avoiding a cold start while keeping the
+    bounded-concurrency guarantee. If adapter creation fails, the message
+    fails (it's already persisted in the DB) but the worker stays alive so
+    subsequent queued messages still get processed.
     """
     from agent_runtime.registry import create_adapter
 
@@ -366,10 +377,11 @@ async def _session_worker(
 
             async with session_lock:
                 async with sem:
-                    # (Re)create the adapter inside the turn slot. If the
-                    # previous turn left it dead, or this is the first turn,
-                    # build a fresh one.  Failure here drops THIS message
-                    # (already in DB) but keeps the worker alive for the next.
+                    # Create the adapter inside the turn slot. The previous
+                    # turn released it back to the pool (or closed it if it
+                    # died), so we acquire fresh each turn — the pool handles
+                    # session-sticky reuse under the hood. Failure here drops
+                    # THIS message (already in DB) but keeps the worker alive.
                     adapter_ready = True
                     if adapter is None:
                         try:
@@ -390,10 +402,23 @@ async def _session_worker(
 
             llm_holder[0] = None
 
-            # If the adapter died (turn killed it or subprocess crashed), drop
-            # it so the next turn rebuilds a fresh one.
-            if adapter is None or not client_alive or not adapter.is_alive():
-                if adapter is not None:
+            # Release the adapter after each turn so the backend can return
+            # its resources to a pool for reuse by the next turn (Claude
+            # Docker containers stay warm and reuse the in-process SDK
+            # session id — no cold start). The worker re-acquires fresh on
+            # the next turn via create_adapter().
+            if adapter is not None:
+                if client_alive and adapter.is_alive():
+                    # Healthy turn: release for reuse (claude→pool, normal→close).
+                    try:
+                        await adapter.release()
+                    except Exception:
+                        try:
+                            await adapter.close()
+                        except Exception:
+                            pass
+                else:
+                    # Dead adapter (killed/crashed): destroy, don't reuse.
                     try:
                         await adapter.close()
                     except Exception:
@@ -405,6 +430,7 @@ async def _session_worker(
     finally:
         llm_holder[0] = None
         if adapter is not None:
+            # Session/connection ending — fully tear down, no reuse.
             try:
                 await adapter.close()
             except Exception:
