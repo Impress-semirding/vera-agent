@@ -143,6 +143,7 @@ export default function EditAgentPage() {
   const [sessions, setSessions] = useState<{ id: string; name: string }[]>([]);
   const [artifactOpen, setArtifactOpen] = useState(false);
   const [artifactTab, setArtifactTab] = useState<'browser' | 'file'>('file');
+  const toggleArtifact = useCallback(() => setArtifactOpen((o) => !o), []);
 
   // Config file state (personal agent)
   const [configFileName, setConfigFileName] = useState('CLAUDE.md');
@@ -379,7 +380,7 @@ export default function EditAgentPage() {
             artifactOpen={artifactOpen}
             artifactTab={artifactTab}
             artifacts={artifacts}
-            onToggleArtifact={() => setArtifactOpen(!artifactOpen)}
+            onToggleArtifact={toggleArtifact}
             onArtifactTabChange={setArtifactTab}
             sessionId={sessionId}
             onResetContext={handleResetContext}
@@ -421,6 +422,66 @@ export default function EditAgentPage() {
 // ═══════════════════════════════════════════════════
 
 // ─── Chat Panel ─────────────────────────────────
+
+/** Single chat bubble — memoized so streaming updates to the last message
+ * don't re-render (or re-parse Markdown for) any historical message. Props
+ * are all primitives or stable references from the message object itself. */
+const MessageItem = memo(function MessageItem({ msg }: { msg: ChatMsg }) {
+  const isUser = msg.role === 'user';
+  const { label: timeLabel, title: timeTitle } = formatMsgTime(msg.timestamp);
+  const hasSegments = !isUser && msg.segments && msg.segments.length > 0;
+  return (
+    <div style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start', marginBottom: 16 }}>
+      <div style={isUser
+        ? { maxWidth: '70%', display: 'flex', flexDirection: 'column', gap: 2 }
+        : { width: '70%', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: hasSegments ? 8 : 2 }
+      }>
+        {timeLabel ? (
+          <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)', textAlign: isUser ? 'right' : 'left', padding: '0 4px' }} title={timeTitle}>
+            {timeLabel}
+            {!isUser && msg.durationMs != null ? (
+              <span style={{ marginLeft: 8, color: 'var(--color-text-quaternary)' }}>
+                执行耗时: {msg.durationMs >= 1000
+                  ? `${(msg.durationMs / 1000).toFixed(1)}s`
+                  : `${msg.durationMs}ms`}
+              </span>
+            ) : null}
+          </div>
+        ) : null}
+        {isUser ? (
+          /* User message: simple bubble */
+          <div style={{
+            padding: '10px 16px', borderRadius: 12, fontSize: 14, lineHeight: 1.6,
+            background: 'var(--color-primary)', color: '#fff', whiteSpace: 'pre-wrap',
+          }}>
+            {msg.content}
+          </div>
+        ) : hasSegments ? (
+          /* Assistant with segments: group reasoning+tool into ThinkingBlock, text segments separate */
+          <SegmentGroup segments={msg.segments!} pending={msg.pending} />
+        ) : (
+          /* Assistant fallback (no segments / old messages) */
+          <>
+            {msg.reasoning ? (
+              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', background: 'var(--color-bg-subtle)', border: '1px solid var(--color-border-light)', borderRadius: 8, padding: '8px 12px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
+                <div style={{ fontWeight: 500, marginBottom: 4 }}><ThunderboltOutlined /> 思考过程</div>
+                {msg.reasoning}
+              </div>
+            ) : null}
+            <div className={s.markdownBody} style={{
+              padding: '6px 16px', borderRadius: 12, fontSize: 14, lineHeight: 1.6,
+              background: 'var(--color-bg-muted)', color: 'var(--color-text)',
+            }}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: CodeBlock, p: 'div' }}>{msg.content}</ReactMarkdown>
+              {msg.pending ? <TypingDots /> : null}
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+});
+
 function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, streaming, onSend, onStop, onClear, artifactOpen, artifactTab, artifacts, onToggleArtifact, onArtifactTabChange, sessionId, onResetContext }: {
   agentName: string; agentType: string; sessionName: string;
   hasSession: boolean;
@@ -494,61 +555,9 @@ function ChatPanel({ agentName, agentType, sessionName, hasSession, messages, st
             {/* Messages */}
             <div style={{ flex: 1, display: 'flex', flexDirection: 'column', overflow: 'hidden', minWidth: 0, position: 'relative' }}>
               <div ref={scrollRef} onScroll={checkNearBottom} style={{ flex: 1, overflowY: 'auto', padding: '24px 32px' }}>
-                {messages.map((msg) => {
-                  const isUser = msg.role === 'user';
-                  const { label: timeLabel, title: timeTitle } = formatMsgTime(msg.timestamp);
-                  const hasSegments = !isUser && msg.segments && msg.segments.length > 0;
-                  return (
-                    <div key={msg.id} style={{ display: 'flex', justifyContent: isUser ? 'flex-end' : 'flex-start', marginBottom: 16 }}>
-                      <div style={isUser
-                        ? { maxWidth: '70%', display: 'flex', flexDirection: 'column', gap: 2 }
-                        : { width: '70%', flexShrink: 0, display: 'flex', flexDirection: 'column', gap: hasSegments ? 8 : 2 }
-                      }>
-                        {timeLabel ? (
-                          <div style={{ fontSize: 13, color: 'var(--color-text-tertiary)', textAlign: isUser ? 'right' : 'left', padding: '0 4px' }} title={timeTitle}>
-                            {timeLabel}
-                            {!isUser && msg.durationMs != null ? (
-                              <span style={{ marginLeft: 8, color: 'var(--color-text-quaternary)' }}>
-                                执行耗时: {msg.durationMs >= 1000
-                                  ? `${(msg.durationMs / 1000).toFixed(1)}s`
-                                  : `${msg.durationMs}ms`}
-                              </span>
-                            ) : null}
-                          </div>
-                        ) : null}
-                        {isUser ? (
-                          /* User message: simple bubble */
-                          <div style={{
-                            padding: '10px 16px', borderRadius: 12, fontSize: 14, lineHeight: 1.6,
-                            background: 'var(--color-primary)', color: '#fff', whiteSpace: 'pre-wrap',
-                          }}>
-                            {msg.content}
-                          </div>
-                        ) : hasSegments ? (
-                          /* Assistant with segments: group reasoning+tool into ThinkingBlock, text segments separate */
-                          <SegmentGroup segments={msg.segments!} pending={msg.pending} />
-                        ) : (
-                          /* Assistant fallback (no segments / old messages) */
-                          <>
-                            {msg.reasoning ? (
-                              <div style={{ fontSize: 12, color: 'var(--color-text-tertiary)', background: 'var(--color-bg-subtle)', border: '1px solid var(--color-border-light)', borderRadius: 8, padding: '8px 12px', whiteSpace: 'pre-wrap', overflowWrap: 'anywhere' }}>
-                                <div style={{ fontWeight: 500, marginBottom: 4 }}><ThunderboltOutlined /> 思考过程</div>
-                                {msg.reasoning}
-                              </div>
-                            ) : null}
-                            <div className={s.markdownBody} style={{
-                              padding: '6px 16px', borderRadius: 12, fontSize: 14, lineHeight: 1.6,
-                              background: 'var(--color-bg-muted)', color: 'var(--color-text)',
-                            }}>
-                              <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: CodeBlock, p: 'div' }}>{msg.content}</ReactMarkdown>
-                              {msg.pending ? <TypingDots /> : null}
-                            </div>
-                          </>
-                        )}
-                      </div>
-                    </div>
-                  );
-                })}
+                {messages.map((msg) => (
+                  <MessageItem key={msg.id} msg={msg} />
+                ))}
               </div>
               {/* Floating "new messages" button */}
               {showNewMsgBtn && (
@@ -1140,7 +1149,10 @@ function FileRow({ name, size, downloadUrl }: { name: string; path: string; size
  *
  * Layout: [ThinkingBlock(reasoning + tools)] [TextSegment] [TextSegment] ...
  */
-function SegmentGroup({ segments, pending }: { segments: Segment[]; pending?: boolean }) {
+/** Memoized: skips re-render when segments array + pending are unchanged.
+ * During streaming only the last (growing) message's segments change, so all
+ * historical SegmentGroups are skipped. */
+const SegmentGroup = memo(function SegmentGroup({ segments, pending }: { segments: Segment[]; pending?: boolean }) {
   const groups: Array<{ type: 'thinking'; items: Segment[] } | { type: 'text'; segment: Segment }> = [];
   let thinkingBuf: Segment[] = [];
 
@@ -1172,10 +1184,10 @@ function SegmentGroup({ segments, pending }: { segments: Segment[]; pending?: bo
       {pending ? <TypingDots /> : null}
     </>
   );
-}
+});
 
 /** Unified collapsible thinking block — renders segments in original order */
-function ThinkingBlock({ items, pending }: { items: Segment[]; pending?: boolean }) {
+const ThinkingBlock = memo(function ThinkingBlock({ items, pending }: { items: Segment[]; pending?: boolean }) {
   const [collapsed, setCollapsed] = useState(false);
   const toolParts = items.filter((s) => s.kind === 'tool');
   const hasContent = items.length > 0;
@@ -1226,10 +1238,10 @@ function ThinkingBlock({ items, pending }: { items: Segment[]; pending?: boolean
       ) : null}
     </div>
   );
-}
+});
 
 /** Single thinking step — individually collapsible, bordered card */
-function ReasoningStep({ text, pending, source }: { text: string; isLast?: boolean; pending?: boolean; source?: 'reasoning' | 'content' }) {
+const ReasoningStep = memo(function ReasoningStep({ text, pending, source }: { text: string; isLast?: boolean; pending?: boolean; source?: 'reasoning' | 'content' }) {
   const [collapsed, setCollapsed] = useState(true);
   if (!text && !pending) return null;
   const isThinking = source === 'reasoning' || !source;
@@ -1270,10 +1282,10 @@ function ReasoningStep({ text, pending, source }: { text: string; isLast?: boole
       ) : null}
     </div>
   );
-}
+});
 
 /** Tool call card — collapsible args and result */
-function ToolCard({ segment }: { segment: Extract<Segment, { kind: 'tool' }> }) {
+const ToolCard = memo(function ToolCard({ segment }: { segment: Extract<Segment, { kind: 'tool' }> }) {
   const { name, args, output, ok, done } = segment;
   const [collapsed, setCollapsed] = useState(true);
   const headerIcon = done
@@ -1330,10 +1342,13 @@ function ToolCard({ segment }: { segment: Extract<Segment, { kind: 'tool' }> }) 
       ) : null}
     </div>
   );
-}
+});
 
-/** Main content text — Markdown with ECharts support */
-function TextSegment({ text }: { text: string; pending?: boolean }) {
+/** Main content text — Markdown with ECharts support.
+ * Memoized: skips re-render (incl. ReactMarkdown re-parse) when `text` is
+ * unchanged. This is the single biggest win for streaming perf — without it,
+ * every token delta re-parses ALL historical messages' Markdown. */
+const TextSegment = memo(function TextSegment({ text }: { text: string; pending?: boolean }) {
   return (
     <div className={s.markdownBody} style={{
       padding: '6px 16px', borderRadius: 12, fontSize: 14, lineHeight: 1.6,
@@ -1342,7 +1357,7 @@ function TextSegment({ text }: { text: string; pending?: boolean }) {
       <ReactMarkdown remarkPlugins={[remarkGfm]} components={{ code: CodeBlock, p: 'div' }}>{text}</ReactMarkdown>
     </div>
   );
-}
+});
 
 function MermaidBlock({ code }: { code: string }) {
   const ref = useRef<HTMLDivElement>(null);
