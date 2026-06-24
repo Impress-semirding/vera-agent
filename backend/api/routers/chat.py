@@ -46,7 +46,7 @@ from sqlalchemy import select
 
 from api.access import can_access_agent
 from api.database import async_session
-from api.llm_client import LLMClient
+from agent_runtime.normal.llm_client import LLMClient
 from api.models import models as M
 from api.util import new_id
 

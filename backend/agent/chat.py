@@ -2,7 +2,7 @@
 LLM chat subprocess — reads JSON lines from stdin, calls Anthropic-compatible
 Messages API (streaming), writes JSON lines to stdout.
 
-Usage (spawned by api/llm_client.py, not manually):
+Usage (spawned by agent_runtime/normal/llm_client.py, not manually):
     python -m agent.chat
 
 Input (stdin, one JSON per line):

@@ -153,7 +153,7 @@ async def upload_files(
 
     Max 10 files. Rejects video/audio. Returns ``{files: [{name, url, size}]}``.
     """
-    from api.oss_client import upload_file, is_allowed, MAX_FILE_COUNT
+    from api.services.oss_client import upload_file, is_allowed, MAX_FILE_COUNT
     from api.database import async_session as _as
 
     async with _as() as db:

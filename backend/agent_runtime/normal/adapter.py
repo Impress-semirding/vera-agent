@@ -7,7 +7,7 @@ This is the legacy/default backend.
 from __future__ import annotations
 
 from agent_runtime.base import AgentAdapter, AgentClient
-from api.llm_client import LLMClient
+from agent_runtime.normal.llm_client import LLMClient
 
 
 class NormalAgentAdapter(AgentAdapter):

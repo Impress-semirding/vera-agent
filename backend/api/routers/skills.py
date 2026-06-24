@@ -26,7 +26,7 @@ from api.api_response import current_user, iso, ok
 from api.database import get_db
 from api.models import models as M
 from api.schemas import schemas as S
-from api.skill_zip import parse_skill_zip
+from api.services.skill_zip import parse_skill_zip
 from api.util import jload, new_id
 
 router = APIRouter(tags=["skills"])

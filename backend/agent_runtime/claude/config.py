@@ -20,7 +20,7 @@ from sqlalchemy import select
 
 from api.database import async_session
 from api.models import models as M
-from api.mcp_jwt import is_mcp_jwt_enabled, mint_mcp_jwt
+from api.services.mcp_jwt import is_mcp_jwt_enabled, mint_mcp_jwt
 from agent_runtime.claude.client import ClaudeAgentConfig
 
 _GLOBAL_CONSTRAINTS = """

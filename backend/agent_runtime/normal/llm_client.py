@@ -1,4 +1,9 @@
-"""LLM subprocess client — manages agent/chat.py via stdin/stdout."""
+"""LLM subprocess client — manages agent/chat.py via stdin/stdout.
+
+This is the normal-engine client: it spawns agent/chat.py (which talks to
+an Anthropic-compatible Messages API) and streams deltas back. ClaudeAgentClient
+(agent_runtime/claude/) mirrors this same stdin/stdout protocol.
+"""
 
 from __future__ import annotations
 
@@ -25,7 +30,12 @@ class LLMClient:
         max_tokens: int = 4096,
     ) -> None:
         """Start the agent/chat.py subprocess and send initial config."""
-        chat_script = os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "agent", "chat.py")
+        # agent/chat.py lives at <backend>/agent/chat.py. This module is at
+        # <backend>/agent_runtime/normal/llm_client.py, so walk up three dirs.
+        chat_script = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+            "agent", "chat.py",
+        )
         self._process = await asyncio.create_subprocess_exec(
             sys.executable, chat_script,
             stdin=asyncio.subprocess.PIPE,
